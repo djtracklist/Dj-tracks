@@ -1,75 +1,66 @@
+import streamlit as st
 import subprocess
 import sys
+import os
+import json
+import openai
 
-# Ensure dateparser is installed
+# Ensure dateparser is available
 try:
     import dateparser
 except ImportError:
     subprocess.check_call([sys.executable, "-m", "pip", "install", "dateparser"])
     import dateparser
 
-import streamlit as st
-import openai
-import json
-import os
-import subprocess
+from youtube_comment_downloader.downloader import YoutubeCommentDownloader, SORT_BY_RECENT
 
 st.title("🎵 DJ Set Track Extractor + MP3 Downloader")
 
 video_url = st.text_input("Enter YouTube DJ Set URL:")
-
 model = st.selectbox("Choose OpenAI model:", ["gpt-4", "gpt-3.5-turbo"])
-
 api_key = st.text_input("Enter your OpenAI API Key:", type="password")
 
 if st.button("Extract Tracks & Download MP3s"):
     if not video_url or not api_key:
-        st.error("Please enter both the YouTube URL and your OpenAI API key.")
-    else:
-        st.info("Processing...")
+        st.error("Please provide a YouTube URL and OpenAI API key.")
+        st.stop()
 
-        st.markdown("**Step 1: Downloading YouTube comments...**")
-        result = subprocess.run(
-            ["python3", "-m", "youtube_comment_downloader", "--url", video_url,
-             "--output", "comments/comments.json", "--pretty", "--limit", "200"],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+    st.info("Step 1: Downloading YouTube comments directly...")
+    try:
+        downloader = YoutubeCommentDownloader()
+        raw_comments = downloader.get_comments_from_url(video_url, sort_by=SORT_BY_RECENT, limit=100)
+        comments = [c["text"] for c in raw_comments if "text" in c]
+
+        if not comments:
+            st.warning("No comments extracted. Try another video.")
+            st.stop()
+
+        st.success(f"{len(comments)} comments downloaded.")
+    except Exception as e:
+        st.error(f"Failed to get comments: {e}")
+        st.stop()
+
+    st.info("Step 2: Extracting track names using GPT...")
+    openai.api_key = api_key
+    comment_block = "\n".join(comments[:50])
+
+    prompt = f"""You are an expert at identifying tracklists from DJ set YouTube comments.
+The following are comments from a DJ set video. Extract track names and artists, one per line in the format 'Artist - Track'.
+
+Comments:
+{comment_block}
+"""    
+
+    try:
+        response = openai.ChatCompletion.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}]
         )
-
-        st.text("STDOUT:")
-        st.text(result.stdout)
-
-        st.text("STDERR:")
-        st.text(result.stderr)
-
-        if not os.path.exists("comments/comments.json"):
-            st.error("No comments were downloaded. Please check the YouTube URL or try a different video.")
-        else:
-            st.success("Comments downloaded successfully!")
-
-            with open("comments/comments.json", "r", encoding="utf-8") as f:
-                comments_data = json.load(f)
-
-            comments_text = "\n".join(entry["text"] for entry in comments_data)
-
-            prompt = (
-                "You are an expert at recognising tracks from DJ sets based on comments.\n"
-                "Extract any track names and artists mentioned, and return them as a list."
-            )
-
-            openai.api_key = api_key
-            response = openai.ChatCompletion.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": prompt},
-                    {"role": "user", "content": comments_text}
-                ]
-            )
-
-            extracted = response["choices"][0]["message"]["content"]
-            st.markdown("### Suggested Tracks:")
-            st.text(extracted)
-
-            with open("tracks.txt", "w") as f:
-                f.write(extracted)
-
-            st.success("All done!")
+        result = response.choices[0].message.content.strip()
+        tracks = [line.strip("-•1234567890. ").strip() for line in result.split("\n") if "-" in line]
+        st.success("Tracks identified:")
+        for i, t in enumerate(tracks, 1):
+            st.write(f"{i}. {t}")
+    except Exception as e:
+        st.error(f"OpenAI API error: {e}")
+        st.stop()
