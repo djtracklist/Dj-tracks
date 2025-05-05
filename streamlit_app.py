@@ -1,4 +1,3 @@
-
 import streamlit as st
 import subprocess
 import openai
@@ -8,9 +7,7 @@ import json
 st.title("🎧 DJ Set Track Extractor + MP3 Downloader")
 
 video_url = st.text_input("Enter YouTube DJ Set URL:")
-
 model = st.selectbox("Choose OpenAI model:", ["gpt-4", "gpt-3.5-turbo"])
-
 api_key = st.text_input("Enter your OpenAI API Key:", type="password")
 
 if st.button("Extract Tracks & Download MP3s"):
@@ -27,7 +24,7 @@ if st.button("Extract Tracks & Download MP3s"):
                 comments_gen = downloader.get_comments_from_url(video_url)
 
                 comments = []
-                for count, comment in zip(range(100), comments_gen):
+                for count, comment in zip(range(50), comments_gen):  # Limit to 50 comments for clarity
                     comments.append(comment["text"])
 
                 if not comments:
@@ -41,14 +38,27 @@ if st.button("Extract Tracks & Download MP3s"):
                 openai.api_key = api_key
                 comment_block = "\n".join(comments)
 
+                refined_prompt = f"""You are helping identify music tracks from comments under a DJ set video.
+
+Each line should follow the format:
+Artist - Track
+
+Only list actual tracks (no guesses or vague mentions). If either the artist or track name is missing or unclear, skip the entry entirely.
+
+Here are some YouTube comments from the DJ set:
+
+{comment_block}
+
+Extract the tracks:
+"""    
+
                 response = openai.ChatCompletion.create(
                     model=model,
                     messages=[
-                        {"role": "system", "content": "You are an expert at identifying tracklists from DJ set comments."},
-                        {"role": "user", "content": f"Extract any track names and artists mentioned in these comments:\n\n{comment_block}"}
+                        {"role": "user", "content": refined_prompt}
                     ],
-                    temperature=0.3,
-                    max_tokens=500
+                    temperature=0.2,
+                    max_tokens=600
                 )
 
                 tracks = response["choices"][0]["message"]["content"]
