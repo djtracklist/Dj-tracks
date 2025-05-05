@@ -1,3 +1,4 @@
+
 import streamlit as st
 import openai
 import os
@@ -20,7 +21,8 @@ if st.button("Extract Tracks & Download MP3s"):
         st.info("Step 1: Downloading YouTube comments...")
         try:
             downloader = YoutubeCommentDownloader()
-            comments = downloader.get_comments_from_url(url)
+            comments_generator = downloader.get_comments_from_url(url)
+            comments = list(comments_generator)  # Convert generator to list
         except Exception as e:
             st.error(f"⚠️ Failed to download comments: {e}")
             st.stop()
