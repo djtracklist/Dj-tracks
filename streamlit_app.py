@@ -18,7 +18,6 @@ model_choice = st.sidebar.selectbox("Choose OpenAI model:", ["gpt-4", "gpt-3.5-t
 api_key      = st.sidebar.text_input("OpenAI API Key:", type="password")
 limit        = st.sidebar.number_input("Max comments to fetch:", 10, 500, 100)
 sort_option  = st.sidebar.selectbox("Sort comments by:", ["recent", "popular"])
-enable_dl    = st.sidebar.checkbox("Enable MP3 download", value=False)
 
 # Main input
 video_url = st.text_input("YouTube DJ Set URL", placeholder="https://www.youtube.com/watch?v=...")
@@ -211,10 +210,9 @@ Comments:
     else:
         st.info("Select one or more tracks above to enable downloading.")
     # Step 4: Download MP3s
-    if enable_dl:
-        if not selected:
-            st.warning("No tracks selected.")
-        else:
+if not selected:
+    st.warning("No tracks selected.")
+else:
             st.info("Step 3: Downloading MP3s…")
             os.makedirs("downloads", exist_ok=True)
             for q in selected:
