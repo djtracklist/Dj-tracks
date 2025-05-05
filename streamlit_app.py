@@ -1,95 +1,76 @@
 import streamlit as st
-import subprocess
-import sys
 import os
+import subprocess
 import json
-from itertools import islice
-from youtube_comment_downloader import downloader as yd
-import openai
+from youtube_comment_downloader.downloader import YoutubeCommentDownloader, SORT_BY_RECENT
+from openai import OpenAI
+import yt_dlp
 
-# App title
+# -- UI --
 st.title("DJ Set Track Extractor + MP3 Downloader")
 
-# User inputs
-youtube_url = st.text_input("Enter YouTube DJ Set URL:")
-model_choice = st.selectbox("Choose OpenAI model:", options=["gpt-4", "gpt-3.5-turbo"])
+video_url = st.text_input("Enter YouTube DJ Set URL:")
+limit = st.slider("Number of comments to fetch", min_value=10, max_value=200, value=50, step=10)
+model = st.selectbox("Choose OpenAI model:", ["gpt-3.5-turbo", "gpt-4"])
 api_key = st.text_input("Enter your OpenAI API Key:", type="password")
 
 if st.button("Extract Tracks & Download MP3s"):
-    # Validate inputs
-    if not youtube_url:
-        st.error("Please enter a YouTube URL.")
-        st.stop()
-    if not api_key:
-        st.error("Please enter your OpenAI API key.")
-        st.stop()
-
     # Step 1: Download comments
-    st.info("Step 1: Downloading YouTube comments directly...")
-    downloader = yd.YoutubeCommentDownloader()
-    comments_gen = downloader.get_comments_from_url(youtube_url, sort_by=yd.SORT_BY_RECENT)
-    comments = list(islice(comments_gen, 200))  # limit to 200 comments
-    if not comments:
-        st.warning("No comments found. Maybe try a different video.")
-        st.stop()
-    st.success(f"{len(comments)} comments downloaded.")
-
-    # Step 2: Extract track names via GPT
-    st.info("Step 2: Extracting track names using GPT...")
-    openai.api_key = api_key
-    comment_block = "\n".join([c.get("text", "") for c in comments])
-    prompt = (
-        "Extract any track names and artists mentioned in the following YouTube comments. "
-        "Return a JSON array of objects with 'artist' and 'track' keys. "
-        "Be flexible with format, and include entries like:\n"
-        '[{"artist":"Artist Name","track":"Track Title"}, ...]\n\n'
-        "Comments:\n" + comment_block
-    )
-
+    st.info("Step 1: Downloading YouTube comments...")
     try:
-        response = openai.ChatCompletion.create(
-            model=model_choice,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0
-        )
-        raw_output = response.choices[0].message.content
+        video_id = video_url.split('v=')[-1].split('&')[0]
+        ytc = YoutubeCommentDownloader()
+        comments = ytc.get_comments_from_url(video_id, sort_by=SORT_BY_RECENT, limit=limit)
+        st.success(f"{len(comments)} comments downloaded.")
     except Exception as e:
-        st.error(f"OpenAI API request failed: {e}")
+        st.error(f"Failed to download comments: {e}")
         st.stop()
 
-    st.subheader("Raw GPT output")
-    st.code(raw_output, language="json")
+    # Prepare comment text block
+    comments_text = "\n".join(c['text'] for c in comments)
 
-    # Parse JSON
+    # Step 2: Extract tracks via GPT
+    st.info("Step 2: Extracting track names using GPT...")
     try:
-        tracks = json.loads(raw_output)
-    except json.JSONDecodeError:
-        st.error("Failed to parse GPT output as JSON.")
-        tracks = []
+        client = OpenAI(api_key=api_key)
+        prompt = f"""Extract an array of JSON objects from the following comments text. Each object should have 'artist' and 'track' fields, and list only distinct tracks. Return valid JSON only:
 
-    if tracks:
+Comments:
+""" + comments_text
+        response = client.chat.completions.create(
+            model=model,
+            messages=[{"role":"user","content":prompt}],
+        )
+        result = response.choices[0].message.content
+        tracks = json.loads(result)
         st.success("Tracks identified:")
-        st.json(tracks)
-    else:
-        st.info("Tracklist")
-        st.write("The comments do not provide specific artist and track information.")
+    except Exception as e:
+        st.error(f"Failed to extract tracks: {e}")
+        st.stop()
 
-    # Step 3: Optional MP3 download
-    if tracks:
-        if st.button("Download All Tracks as MP3"):
-            st.info("Downloading MP3s...")
-            for t in tracks:
-                artist = t.get("artist", "Unknown Artist")
-                track = t.get("track", "Unknown Track")
-                title = f"{artist} - {track}"
-                # sanitize filename
-                safe_title = "".join(c if c.isalnum() or c in " ._-()" else "_" for c in title)
-                cmd = [
-                    "yt-dlp",
-                    "--extract-audio",
-                    "--audio-format", "mp3",
-                    "--output", f"{safe_title}.%(ext)s",
-                    f"ytsearch1:{title}"
-                ]
-                subprocess.run(cmd, check=False)
-            st.success("MP3 downloads complete.")
+    # Display and select tracks
+    st.subheader("Step 3: (Optional) Download MP3s")
+    selections = []
+    for idx, t in enumerate(tracks):
+        label = f"{t.get('artist','Unknown')} - {t.get('track','Unknown')}"
+        if st.checkbox(label, key=f"chk_{idx}", value=True):
+            selections.append(label)
+    if st.button("Download Selected MP3s"):
+        st.info("Downloading selected tracks...")
+        for song in selections:
+            st.write(f"Downloading: {song}")
+            # yt-dlp download
+            ydl_opts = {
+                'format': 'bestaudio/best',
+                'outtmpl': os.path.join('downloads', f"{song}.%(ext)s"),
+                'noplaylist': True,
+                'quiet': True,
+                'postprocessors': [{'key': 'FFmpegExtractAudio','preferredcodec': 'mp3','preferredquality': '192'}],
+            }
+            os.makedirs('downloads', exist_ok=True)
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                try:
+                    ydl.download([f"ytsearch1:{song}"])
+                except Exception as de:
+                    st.error(f"Download failed for {song}: {de}")
+        st.success("All selected downloads complete!")
