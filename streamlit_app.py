@@ -211,34 +211,6 @@ Comments:
     else:
         st.info("Select one or more tracks above to enable downloading.")
         
-    # ─── Step 4: Download Selected MP3s ─────────────────────────────────────────────
-
-if st.button("Download Selected MP3s"):
-    if not selected_tracks:
-        st.warning("No tracks selected.")
-    else:
-        for t in selected_tracks:
-            artist = t.get("artist", "Unknown Artist")
-            track  = t.get("track",  "Unknown Track")
-            query  = f"{artist} - {track}"
-
-            st.info(f"Downloading “{query}”…")
-
-            ydl_opts = {
-                "format": "bestaudio/best",
-                "postprocessors": [{
-                    "key": "FFmpegExtractAudio",
-                    "preferredcodec": "mp3",
-                    "preferredquality": "192",
-                }],
-                "outtmpl": f"{artist} - {track}.%(ext)s",
-                "quiet": True,
-            }
-
-            # yt_dlp import assumed at top: import yt_dlp
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                # this does a YouTube search + download first result
-                ydl.download([f"ytsearch1:{query}"])
-        st.success("All selected tracks have been downloaded!")
+  
 
     st.balloons()
