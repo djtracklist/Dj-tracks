@@ -41,134 +41,119 @@ if st.button("Extract & Download"):
         st.error(f"Failed to download comments: {e}")
         st.stop()
 
- # ── STEP 2: Rich GPT‑4 extraction with dual examples ──
-    st.info("Step 2: Extracting track names via GPT with enriched few‑shot examples…")
+ # ── STEP 2: Extract tracks + corrections in one pass via GPT ──
+    st.info("Step 2: Extracting tracks and corrections via GPT…")
     client = OpenAI(api_key=api_key)
 
-    # System instructions
     system_prompt = """
-You are a world‑class DJ‑set tracklist curator.  Given timestamped comment snippets, extract the
-full, ordered tracklist.  Enrich each entry by filling in missing pieces (version, label) when possible.
-Return **ONLY** a JSON array of objects with keys:
+You are a world‑class DJ‑set tracklist curator with a complete music knowledge base.
+Given a list of raw YouTube comment texts, do two things:
+1) Extract all timestamped track mentions in the form:
+   MM:SS Artist - Track Title (optional remix/version and [label])
+2) Extract any correction/update comments where a user writes something like
+   "edit:", "correction:", "update:", "oops:", etc., that clarifies or replaces
+   a previous track.
+
+Return **only** a JSON object with two keys:
+- "tracks": a list of objects for the original timestamped mentions,
+- "corrections": a list of objects for the correction lines.
+
+Each object must have exactly these fields:
   • artist  (string)
   • track   (string)
   • version (string, or empty if none)
   • label   (string, or empty if none)
-No extra keys, no commentary.
+
+No extra keys, no prose.
 """
 
-    # Two few‑shot examples drawn from real comments
-    few_shot_example = """
-### Example 1 (sparse comments):
+    few_shot = """
+### Example Input:
 Comments:
 03:45 John Noseda - Climax
 05:10 Roy - Shooting Star [1987]
 07:20 Cormac - Sparks
+10:00 edit: John Noseda - Climax (VIP Mix)
 
-### JSON output:
-[
-  {"artist":"John Noseda","track":"Climax","version":"","label":""},
-  {"artist":"Roy","track":"Shooting Star","version":"","label":"1987"},
-  {"artist":"Cormac","track":"Sparks","version":"","label":""}
-]
-
-### Example 2 (detailed comment):
-Comments:
-00:00 Sylvester - I need you (extended 12\" mix)
-05:00 Le Jete - La cage aux folles
-07:10 Divine - Love Reaction
-10:40 Claudja Barry - Work me over
-12:10 Club Domani & Airys - A che ora l'amora (Hifi Sean mix)
-15:50 ? - ?
-18:00 Soft Cell - Tainted Love
-22:30 ? - ?
-25:00 Ascii Disko - Einfach
-27:50 KiNK - Clap on 2
-31:00 Vincent Palacino - Hard diversion
-32:20 Fierce Ruling Diva - Rub It In
-34:35 Glam - Hell's Party (DJ Ricci & DFC team mix)
-37:10 Digital Domain - I Need Relief (1992)
-40:30 Terrorize - It's Just a Feeling
-43:30 Cinthie - City Lights
-47:25 Sterling Void - It's Alright 98 Re‑Edit
-
-### JSON output:
-[
-  {"artist":"Sylvester","track":"I need you","version":"extended 12\\\" mix","label":""},
-  {"artist":"Le Jete","track":"La cage aux folles","version":"","label":""},
-  {"artist":"Divine","track":"Love Reaction","version":"","label":""},
-  {"artist":"Claudja Barry","track":"Work me over","version":"","label":""},
-  {"artist":"Club Domani & Airys","track":"A che ora l'amora","version":"Hifi Sean mix","label":""},
-  {"artist":"Soft Cell","track":"Tainted Love","version":"","label":""},
-  {"artist":"Ascii Disko","track":"Einfach","version":"","label":""},
-  {"artist":"KiNK","track":"Clap on 2","version":"","label":""},
-  {"artist":"Vincent Palacino","track":"Hard diversion","version":"","label":""},
-  {"artist":"Fierce Ruling Diva","track":"Rub It In","version":"","label":""},
-  {"artist":"Glam","track":"Hell's Party","version":"DJ Ricci & DFC team mix","label":""},
-  {"artist":"Digital Domain","track":"I Need Relief","version":"","label":"1992"},
-  {"artist":"Terrorize","track":"It's Just a Feeling","version":"","label":""},
-  {"artist":"Cinthie","track":"City Lights","version":"","label":""},
-  {"artist":"Sterling Void","track":"It's Alright","version":"98 Re‑Edit","label":""}
-]
+### Example JSON Output:
+{
+  "tracks": [
+    {"artist":"John Noseda","track":"Climax","version":"","label":""},
+    {"artist":"Roy","track":"Shooting Star","version":"","label":"1987"},
+    {"artist":"Cormac","track":"Sparks","version":"","label":""}
+  ],
+  "corrections": [
+    {"artist":"John Noseda","track":"Climax","version":"VIP Mix","label":""}
+  ]
+}
 """
 
-    # Prepare the actual comments snippet
-    snippet = "\n".join(comments[:50])
-    st.text_area("❯ Prompt sent to GPT:", snippet, height=200)
+    # bundle up to first 100 comments
+    snippet = "\n".join(comments[:100])
+    st.text_area("❯ Prompt sent to GPT (first 100 comments):", snippet, height=200)
 
-    # Helper to strip markdown fences
     def extract_json(raw: str) -> str:
+        # remove code fences if any
         if raw.startswith("```"):
             parts = raw.split("```")
             if len(parts) >= 3:
                 return parts[1].strip()
         return raw.strip()
 
-    # Send to model
-    def ask(model_name: str) -> str:
+    def ask(model_name: str) -> dict:
         resp = client.chat.completions.create(
             model=model_name,
             messages=[
                 {"role":"system",    "content":system_prompt},
-                {"role":"assistant", "content":few_shot_example},
+                {"role":"assistant", "content":few_shot},
                 {"role":"user",      "content":f"Comments:\n{snippet}"},
             ],
             temperature=0,
         )
         return resp.choices[0].message.content
 
-    # Try GPT-4, fallback to 3.5
-    tracks = None
+    tracks = []
+    corrections = []
     used_model = None
+
     for m in [model_choice, "gpt-3.5-turbo"]:
         try:
             raw = ask(m)
             clean = extract_json(raw)
             parsed = json.loads(clean)
-            if isinstance(parsed, list) and parsed:
-                tracks = parsed
-                used_model = m
+            if (
+                isinstance(parsed, dict)
+                and "tracks" in parsed
+                and "corrections" in parsed
+            ):
+                tracks      = parsed["tracks"]
+                corrections = parsed["corrections"]
+                used_model  = m
                 break
         except Exception:
             continue
 
-    if not tracks:
-        st.error("❌ GPT failed to extract any tracks.")
+    if used_model is None:
+        st.error("❌ GPT failed to extract any tracks or corrections.")
         st.stop()
 
-    st.success(f"✅ {len(tracks)} tracks identified and enriched via {used_model}.")
-    for i, t in enumerate(tracks, start=1):
-        artist  = t.get("artist","Unknown Artist")
-        track   = t.get("track","Unknown Track")
+    # merge original tracks + corrections (you can dedupe if desired)
+    all_entries = tracks + corrections
+
+    st.success(f"✅ {len(tracks)} tracks + {len(corrections)} corrections identified via {used_model}.")
+
+    # display numbered list
+    for i, t in enumerate(all_entries, start=1):
+        artist  = t.get("artist", "Unknown Artist")
+        track   = t.get("track",  "Unknown Track")
         version = t.get("version","")
-        label   = t.get("label","")
+        label   = t.get("label",  "")
         line = f"{i}. {artist} - {track}"
         if version:
             line += f" ({version})"
         if label:
             line += f" [{label}]"
         st.write(line)
-
     # Step 3: Track selection UI
     st.write("---")
     st.write("### Select tracks to download")
