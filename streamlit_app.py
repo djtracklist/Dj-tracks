@@ -18,6 +18,7 @@ model_choice = st.sidebar.selectbox("Choose OpenAI model:", ["gpt-4", "gpt-3.5-t
 api_key      = st.sidebar.text_input("OpenAI API Key:", type="password")
 limit        = st.sidebar.number_input("Max comments to fetch:", 10, 500, 100)
 sort_option  = st.sidebar.selectbox("Sort comments by:", ["recent", "popular"])
+enable_dl    = st.sidebar.checkbox("Enable MP3 download", value=False)
 
 # Main input
 video_url = st.text_input("YouTube DJ Set URL", placeholder="https://www.youtube.com/watch?v=...")
@@ -209,34 +210,25 @@ Comments:
             )
     else:
         st.info("Select one or more tracks above to enable downloading.")
-# ─── Step 4: Download Selected MP3s ─────────────────────────────────────────────
-
-if st.button("Download Selected MP3s"):
-    if not selected_tracks:
-        st.warning("No tracks selected.")
-    else:
-        for t in selected_tracks:
-            artist = t.get("artist", "Unknown Artist")
-            track  = t.get("track",  "Unknown Track")
-            query  = f"{artist} - {track}"
-
-            st.info(f"Downloading “{query}”…")
-
-            ydl_opts = {
-                "format": "bestaudio/best",
-                "postprocessors": [{
-                    "key": "FFmpegExtractAudio",
-                    "preferredcodec": "mp3",
-                    "preferredquality": "192",
-                }],
-                "outtmpl": f"{artist} - {track}.%(ext)s",
-                "quiet": True,
-            }
-
-            # yt_dlp import assumed at top: import yt_dlp
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                # this does a YouTube search + download first result
-                ydl.download([f"ytsearch1:{query}"])
-        st.success("All selected tracks have been downloaded!")
+    # Step 4: Download MP3s
+    if enable_dl:
+        if not selected:
+            st.warning("No tracks selected.")
+        else:
+            st.info("Step 3: Downloading MP3s…")
+            os.makedirs("downloads", exist_ok=True)
+            for q in selected:
+                st.write(f"▶️ {q}")
+                ydl_opts = {
+                    "format": "bestaudio/best",
+                    "outtmpl": os.path.join("downloads", "%(title)s.%(ext)s"),
+                }
+                try:
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        info = ydl.extract_info(f"ytsearch1:{q}", download=True)
+                        fn = ydl.prepare_filename(info)
+                    st.success(f"✅ Downloaded to `{fn}`")
+                except Exception as e:
+                    st.error(f"❌ Failed to download {q}: {e}")
 
     st.balloons()
