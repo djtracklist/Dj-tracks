@@ -154,7 +154,7 @@ Comments:
         if label:
             line += f" [{label}]"
         st.write(line)
- # ── STEP 3: Selection UI with individual checkboxes ──
+# ── STEP 3: Selection UI + single bulk download ──
     st.write("---")
     st.write("### Select tracks to download")
 
@@ -164,32 +164,54 @@ Comments:
         for e in all_entries
     ]
 
-    # Render one checkbox per track, vertically
+    # Render one checkbox per track
     selected = []
     for idx, label in enumerate(labels):
-        # Use a unique key so Streamlit doesn’t warn
         if st.checkbox(label, value=True, key=f"trk_{idx}"):
             selected.append(label)
 
+    # Only show the download button if downloads are enabled
     if enable_dl:
         if not selected:
             st.warning("No tracks selected.")
         else:
-            st.info("Step 3: Downloading MP3s…")
-            os.makedirs("downloads", exist_ok=True)
-            for label in selected:
-                st.write(f"▶️ {label}")
-                ydl_opts = {
-                    "format": "bestaudio/best",
-                    "outtmpl": os.path.join("downloads","%(title)s.%(ext)s"),
-                }
-                try:
-                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                        info = ydl.extract_info(f"ytsearch1:{label}", download=True)
-                        fn = ydl.prepare_filename(info)
-                    st.success(f"✅ Downloaded to `{fn}`")
-                except Exception as e:
-                    st.error(f"❌ Failed to download {label}: {e}")
+            # Bulk‑download trigger
+            if st.button("Download Selected MP3s"):
+                st.info("Downloading all selected tracks…")
+                os.makedirs("downloads", exist_ok=True)
+                downloaded_paths = []
+
+                # 1) Fetch each track
+                for label in selected:
+                    st.write(f"▶️ Downloading {label}")
+                    ydl_opts = {
+                        "format": "bestaudio/best",
+                        "outtmpl": os.path.join("downloads","%(title)s.%(ext)s"),
+                    }
+                    try:
+                        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                            info = ydl.extract_info(f"ytsearch1:{label}", download=True)
+                            path = ydl.prepare_filename(info)
+                            downloaded_paths.append(path)
+                        st.success(f"✅ Downloaded `{os.path.basename(path)}`")
+                    except Exception as e:
+                        st.error(f"❌ Failed to download {label}: {e}")
+
+                # 2) Package into ZIP
+                import io, zipfile
+                buffer = io.BytesIO()
+                with zipfile.ZipFile(buffer, "w") as zipf:
+                    for path in downloaded_paths:
+                        zipf.write(path, arcname=os.path.basename(path))
+                buffer.seek(0)
+
+                # 3) Offer single download button
+                st.download_button(
+                    label="Download All as ZIP",
+                    data=buffer,
+                    file_name="dj_tracks.zip",
+                    mime="application/zip",
+                )
 
     # Step 4: Download MP3s
     if enable_dl:
