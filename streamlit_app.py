@@ -3,8 +3,8 @@ import subprocess
 import sys
 import os
 import json
-import openai
 from itertools import islice
+import openai
 
 # Ensure dateparser is available
 try:
@@ -44,9 +44,11 @@ if st.button("Extract Tracks & Download MP3s"):
         st.stop()
 
     st.info("Step 2: Extracting track names using GPT...")
-    openai.api_key = api_key
-    comment_block = "\n".join(comments[:50])
 
+    from openai import OpenAI
+    client = OpenAI(api_key=api_key)
+
+    comment_block = "\n".join(comments[:50])
     prompt = f"""You are an expert at identifying tracklists from DJ set YouTube comments.
 The following are comments from a DJ set video. Extract track names and artists, one per line in the format 'Artist - Track'.
 
@@ -55,7 +57,7 @@ Comments:
 """    
 
     try:
-        response = openai.ChatCompletion.create(
+        response = client.chat.completions.create(
             model=model,
             messages=[{"role": "user", "content": prompt}]
         )
