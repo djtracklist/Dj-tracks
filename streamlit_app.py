@@ -1,6 +1,6 @@
 import os
 import io
-import zipfile
+import zipfile  # still imported, but unused in this mode
 import json
 
 import streamlit as st
@@ -30,7 +30,7 @@ if st.button("Extract Tracks", key="extract_btn"):
     if not video_url.strip():
         st.error("Please enter a YouTube URL."); st.stop()
 
-    # Step 1: Download comments
+    # Step 1: Download comments
     st.info("Step 1: Downloading comments…")
     try:
         downloader = YoutubeCommentDownloader()
@@ -43,7 +43,7 @@ if st.button("Extract Tracks", key="extract_btn"):
     except Exception as e:
         st.error(f"Failed to download comments: {e}"); st.stop()
 
-    # Step 2: GPT extraction
+    # Step 2: GPT extraction
     st.info("Step 2: Extracting tracks via GPT…")
     client = OpenAI(api_key=api_key)
     system_prompt = """
@@ -123,110 +123,73 @@ Comments:
     st.success(f"✅ {len(tracks)} tracks + {len(corrections)} corrections via {used_model}.")
     st.session_state["dj_tracks"] = all_entries
 
-# ── STEP 3 & 4: SHOW LIST, PREVIEW & DOWNLOAD ─────────────────────────────────
+# ── DISPLAY & DOWNLOAD (one button per MP3) ──────────────────────────────────────
 if "dj_tracks" in st.session_state:
     all_entries = st.session_state["dj_tracks"]
 
-    # 1) Static list of tracks
-    st.write("### Tracks identified:")
-    for i, e in enumerate(all_entries, start=1):
-        st.write(f"{i}. {e['artist']} – {e['track']}")
-
     st.write("---")
-    st.write("### Preview YouTube results (select to download)")
+    st.write("### Select tracks to download")
 
-    # 2) Cache the YouTube search metadata so checkboxes don't re-trigger fetch
-    @st.cache_data(show_spinner=False)
-    def fetch_video_candidates(entries):
-        ydl = yt_dlp.YoutubeDL({"quiet": True, "skip_download": True})
-        vids = []
-        for e in entries:
-            query = f"{e['artist']} - {e['track']}"
-            try:
-                info = ydl.extract_info(f"ytsearch1:{query}", download=False)
-                vids.append(info["entries"][0])
-            except Exception:
-                vids.append(None)
-        return vids
+    selected = []
+    for idx, entry in enumerate(all_entries):
+        label = f"{entry['artist']} - {entry['track']}"
+        if st.checkbox(label, value=True, key=f"chk_{idx}"):
+            selected.append(label)
 
-    video_results = fetch_video_candidates(all_entries)
-
-    # 3) Render each thumbnail + title + checkbox
-    to_download = []
-    for idx, video in enumerate(video_results):
-        entry = all_entries[idx]
-        label = f"{entry['artist']} – {entry['track']}"
-        if video is None:
-            st.error(f"No YouTube match for **{label}**")
-            continue
-
-        cols = st.columns([1, 4, 1])
-        # thumbnail
-        thumb = video.get("thumbnail")
-        if thumb:
-            cols[0].image(thumb, width=100)
-        else:
-            cols[0].write("❓")
-
-        # title + link + query
-        title = video.get("title", "Unknown title")
-        url   = video.get("webpage_url", "#")
-        cols[1].markdown(f"**[{title}]({url})**")
-        cols[1].caption(f"Search: `{entry['artist']} - {entry['track']}`")
-
-        # checkbox
-        if cols[2].checkbox("", key=f"vid_{idx}"):
-            to_download.append(video)
-
-    st.write("---")
-    # 4) Download button
-    if to_download and st.button("Download Selected MP3s", key="dl_btn"):
+    if selected and st.button("Download Selected MP3s", key="download_btn"):
         st.info("📥 Downloading selected tracks…")
         os.makedirs("downloads", exist_ok=True)
-        saved = []
+        downloaded_paths = []
 
-        for video in to_download:
-            title = video.get("title")
-            url   = video.get("webpage_url")
-            st.write(f"▶️ {title}")
+        for label in selected:
+            st.write(f"▶️ {label}")
             ydl_opts = {
                 "format": "bestaudio/best",
-                "outtmpl": os.path.join("downloads","%(title)s.%(ext)s"),
+                "outtmpl": os.path.join("downloads", "%(title)s.%(ext)s"),
                 "postprocessors": [{
                     "key": "FFmpegExtractAudio",
                     "preferredcodec": "mp3",
                     "preferredquality": "192",
                 }],
+                "nocheckcertificate": True,
+                "geo_bypass": True,
+                "ignoreerrors": True,
+                "no_warnings": True,
                 "quiet": True,
+                "http_headers": {
+                    "User-Agent": (
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/116.0.0.0 Safari/537.36"
+                    ),
+                    "Referer": "https://www.youtube.com/",
+                },
             }
             try:
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    info = ydl.extract_info(url, download=True)
+                    info = ydl.extract_info(f"ytsearch1:{label}", download=True)
                     orig = ydl.prepare_filename(info)
                     mp3  = os.path.splitext(orig)[0] + ".mp3"
-                    saved.append(mp3)
+                    downloaded_paths.append(mp3)
                 st.success(f"✅ {os.path.basename(mp3)}")
             except Exception as e:
-                st.error(f"❌ Failed to download {title}: {e}")
+                st.error(f"❌ Failed to download {label}: {e}")
 
-        # Bundle into ZIP
-        buf = io.BytesIO()
-        with zipfile.ZipFile(buf, "w") as zf:
-            for p in saved:
-                if os.path.exists(p):
-                    zf.write(p, arcname=os.path.basename(p))
-        buf.seek(0)
+        st.write("---")
+        st.write("### Click to save each MP3 to your device")
 
-        if saved:
-            st.download_button(
-                "Download All as ZIP",
-                data=buf,
-                file_name="dj_tracks.zip",
-                mime="application/zip",
-                key="zip_dl",
-            )
-        else:
-            st.warning("No files were downloaded successfully.")
-    elif not to_download:
-        st.info("Select at least one video above to enable downloading.")
+        for i, mp3_path in enumerate(downloaded_paths):
+            if os.path.exists(mp3_path):
+                with open(mp3_path, "rb") as f:
+                    st.download_button(
+                        label=f"Save {os.path.basename(mp3_path)}",
+                        data=f,
+                        file_name=os.path.basename(mp3_path),
+                        mime="audio/mpeg",
+                        key=f"dl_{i}",
+                    )
+            else:
+                st.warning(f"File missing: {mp3_path}")
 
+    elif not selected:
+        st.info("Select one or more tracks above to enable download.")
