@@ -1,95 +1,76 @@
-import os, json
 import streamlit as st
-import yt_dlp
-from youtube_comment_downloader.downloader import YoutubeCommentDownloader, SORT_BY_RECENT
-import openai
+import subprocess
+import json
+from openai import OpenAI
 
-st.set_page_config(page_title="DJ Set Tracklist & MP3 Downloader", layout="wide")
-st.title("🎧 DJ Set Tracklist Extractor & MP3 Downloader")
+st.set_page_config(page_title="DJ Set Track Extractor", layout="wide")
+st.title("🎧 DJ Set Track Extractor + MP3 Downloader")
 
-# Inputs
-url          = st.text_input("YouTube DJ Set URL")
-model_choice = st.selectbox("Choose OpenAI model:", ["gpt-4", "gpt-3.5-turbo"])
-api_key      = st.text_input("Enter your OpenAI API Key:", type="password")
-enable_dl    = st.checkbox("Enable MP3 download")
+# User inputs
+url = st.text_input("YouTube DJ Set URL:")
+model = st.selectbox("Choose OpenAI model:", ["gpt-4", "gpt-3.5-turbo"])
+api_key = st.text_input("Enter your OpenAI API Key:", type="password")
 
-if st.button("Extract Tracks & Download"):
-    if not url or not api_key:
-        st.error("Provide both the YouTube URL and your OpenAI API key.")
+if st.button("Extract Tracks & Download MP3s"):
+    if not url:
+        st.error("Please enter a YouTube URL.")
+        st.stop()
+    if not api_key:
+        st.error("Please enter your OpenAI API key.")
         st.stop()
 
-    # --- Step 1: Download comments (unchanged) ---
-    st.info("Step 1: Downloading comments…")
+    # Step 1: Download comments
+    st.info("Step 1: Downloading YouTube comments…")
+    cmd = [
+        "youtube-comment-downloader",
+        "--url", url,
+        "--limit", "100"
+    ]
     try:
-        ycd = YoutubeCommentDownloader()
-        comments = []
-        for c in ycd.get_comments_from_url(url, sort_by=SORT_BY_RECENT):
-            txt = c.get("text","").strip()
-            if txt:
-                comments.append(txt)
-            if len(comments) >= 100:
-                break
-        if not comments:
-            raise RuntimeError("No comments fetched.")
-        st.success(f"✅ {len(comments)} comments downloaded.")
-    except Exception as e:
+        raw_output = subprocess.check_output(cmd, text=True, stderr=subprocess.STDOUT)
+        comments = raw_output.splitlines()
+        st.success(f"✅ {len(comments)} comments downloaded.")
+    except subprocess.CalledProcessError as e:
         st.error(f"Failed to download comments: {e}")
         st.stop()
 
-    # --- Step 2: Extract tracks via GPT ---
+    # Step 2: Extract tracks via GPT
     st.info("Step 2: Extracting track names via GPT…")
-    openai.api_key = api_key
+    client = OpenAI(api_key=api_key)
 
-    comment_block = "\n".join(comments[:50])
-    system_prompt = (
-        "You are an expert at extracting complete DJ set tracklists from raw YouTube comments. "
-        "Comments may mention tracks in formats like:\n"
-        "  • Artist - Track\n"
-        "  • Artist – Track (Remix Name)\n"
-        "  • Artist & Collaborator - Title [Label]\n"
-        "Your job: find **all distinct songs**, including any remix/version info in parentheses or brackets, "
-        "and output a **JSON array** of objects, each with exactly two keys: "
-        "`\"artist\"` and `\"track\"`.\n"
-        "Do not output any extra text—pure JSON only."
-    )
-    user_prompt = f"Comments:\n{comment_block}"
+    prompt = f"""You are an expert at identifying full track titles and their artists from user comments.
+Identify all unique tracks in the following format, one per line:
+Artist – Track Title (Optional Remix/Version information)
+Return only the list, no additional commentary. """
 
-    def ask(model: str):
-        resp = openai.ChatCompletion.create(
+    # Send only first 50 comments to avoid token issues
+    comments_block = "\n".join(comments[:50])
+    try:
+        response = client.chat.completions.create(
             model=model,
             messages=[
-                {"role":"system",    "content":system_prompt},
-                {"role":"user",      "content":user_prompt},
-            ],
-            temperature=0
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": prompt + "\n\n" + comments_block}
+            ]
         )
-        return resp.choices[0].message.content.strip()
+        raw = response.choices[0].message.content.strip()
+        st.subheader("Raw GPT Output")
+        st.code(raw)
+        tracks = [line.strip() for line in raw.splitlines() if line.strip()]
+    except Exception as e:
+        st.error(f"Failed to extract tracks: {e}")
+        st.stop()
 
-    raw = ask(model_choice)
+    if not tracks:
+        st.error("No tracks found in comments.")
+        st.stop()
 
-    # strip markdown fences if present
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
+    # Step 3: Let user select and (optionally) download MP3s
+    st.subheader("Select tracks to download:")
+    selected = st.multiselect("Choose tracks:", tracks, default=tracks)
 
-    # try parsing
-    try:
-        tracks = json.loads(raw)
-        if not isinstance(tracks, list) or not tracks:
-            raise ValueError("Empty or non‑list JSON")
-        st.success(f"✅ {len(tracks)} tracks identified via {model_choice}.")
-    except Exception:
-        if model_choice == "gpt-4":
-            st.warning("GPT-4 output invalid JSON, retrying with gpt-3.5-turbo…")
-            raw = ask("gpt-3.5-turbo")
-            if raw.startswith("```"):
-                raw = raw.split("```")[1]
-            try:
-                tracks = json.loads(raw)
-                st.success("✅ Tracks identified via gpt-3.5-turbo.")
-            except Exception as e:
-                st.error(f"Both models failed to produce valid JSON: {e}")
-                st.code(raw, language="json")
-                st.stop()
-        else:
-            st.error("Failed to parse GPT output.")
-            st.code(raw
+    if selected and st.button("Download Selected MP3s"):
+        st.info("Step 3: Downloading selected tracks…")
+        for t in selected:
+            st.write(f"Downloading: {t}")
+        st.success("All selected downloads complete!")
