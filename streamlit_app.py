@@ -42,24 +42,54 @@ if st.button("Extract & Download"):
         st.stop()
 
     # Step 2: Use GPT to extract tracks
-    st.info("Step 2: Extracting track names via GPT…")
+    st.info("Step 2: Extracting track names via GPT…")
     client = OpenAI(api_key=api_key)
 
-    system_prompt = (
-        "You are an expert at reading DJ-set tracklists from YouTube comments "
-        "and returning a pure JSON list of {artist, track} objects."
-    )
-    few_shot_example = (
-        "Example input:\n"
-        "Comments:\n"
-        "12:34 Floating Points - Birth 4000\n"
-        "22:10 Tiga & Hudson Mohawke - Untitled Codename Rimini\n\n"
-        "Example output (JSON only):\n"
-        "[\n"
-        "  {\"artist\": \"Floating Points\", \"track\": \"Birth 4000\"},\n"
-        "  {\"artist\": \"Tiga & Hudson Mohawke\", \"track\": \"Untitled Codename Rimini\"}\n"
-        "]"
-    )
+    system_prompt = """
+You are a world‑class DJ‑set tracklist specialist with access to a complete music knowledge base.
+Given a series of YouTube comment snippets (timestamps + partial track mentions), produce the full, ordered tracklist.
+Enrich each entry with:
+  • Full artist name  
+  • Exact track title  
+  • Version or remix details if known (e.g. “Tiga’s 1‑2‑3‑4 Remix”)  
+  • Label or release info in square brackets, if known  
+Respond **only** with a JSON array of objects in this format:
+
+[
+  {
+    "artist":   "Artist Name",
+    "track":    "Track Title",
+    "version":  "Remix/Version or empty string",
+    "label":    "Label or empty string"
+  },
+  …
+]
+No extra keys, no explanatory text.
+"""
+
+    few_shot_example = """
+### Example Input Comments:
+05:12 Floating Points – Birth 4000  
+15:34 Tiga & Hudson Mohawke – Untitled Codename Rimini  
+
+### Example JSON Output:
+[
+  {
+    "artist":  "Floating Points",
+    "track":   "Birth 4000",
+    "version": "",
+    "label":   ""
+  },
+  {
+    "artist":  "Tiga & Hudson Mohawke",
+    "track":   "Untitled Codename Rimini",
+    "version": "",
+    "label":   ""
+  }
+]
+"""
+
+    # bundle the first 50 comments
     snippet = "\n".join(comments[:50])
     user_block = f"Comments:\n{snippet}"
 
@@ -70,7 +100,7 @@ if st.button("Extract & Download"):
                 return parts[1].strip()
         return raw.strip()
 
-    def ask(model_name: str) -> tuple[list[dict], str]:
+    def ask_gpt(model_name: str):
         resp = client.chat.completions.create(
             model=model_name,
             messages=[
@@ -80,28 +110,40 @@ if st.button("Extract & Download"):
             ],
             temperature=0,
         )
-        raw = resp.choices[0].message.content
-        clean = extract_json(raw)
-        data = json.loads(clean)
-        return data, model_name
+        return resp.choices[0].message.content
 
-    tracks = []
-    used_model = ""
+    tracks = None
+    used_model = None
+    # try GPT-4, fallback to 3.5
     for m in [model_choice, "gpt-3.5-turbo"]:
         try:
-            data, used = ask(m)
+            raw = ask_gpt(m)
+            clean = extract_json(raw)
+            data = json.loads(clean)
             if isinstance(data, list) and data:
                 tracks = data
-                used_model = used
+                used_model = m
                 break
         except Exception:
             continue
 
     if not tracks:
-        st.error("GPT failed to extract any tracks.")
+        st.error("❌ GPT failed to extract any enriched tracks.")
         st.stop()
 
-    st.success(f"✅ {len(tracks)} tracks identified via {used_model}.")
+    st.success(f"✅ {len(tracks)} tracks identified and enriched via {used_model}:")
+    # Optionally: display in numbered form
+    for i, t in enumerate(tracks, start=1):
+        artist  = t.get("artist", "")
+        track   = t.get("track", "")
+        version = t.get("version", "")
+        label   = t.get("label", "")
+        line = f"{i}. {artist} - {track}"
+        if version:
+            line += f" ({version})"
+        if label:
+            line += f" [{label}]"
+        st.write(line)
 
     # Step 3: Track selection UI
     st.write("---")
