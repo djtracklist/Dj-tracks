@@ -20,14 +20,19 @@ if run_button and video_url and api_key:
     st.write("Step 1: Downloading YouTube comments...")
     video_id = video_url.split("v=")[-1].split("&")[0] if "v=" in video_url else video_url.split("/")[-1]
     os.makedirs("comments", exist_ok=True)
-    
-    subprocess.run([
+
+    result = subprocess.run([
         "python3", "-m", "youtube_comment_downloader",
         "--youtubeid", video_id,
         "--output", "comments/comments.json",
         "--sort", "0",
         "--limit", "100"
-    ])
+    ], capture_output=True, text=True)
+
+    st.text("STDOUT:")
+    st.text(result.stdout)
+    st.text("STDERR:")
+    st.text(result.stderr)
 
     st.write("Checking if comments were downloaded...")
     comments_path = "comments/comments.json"
