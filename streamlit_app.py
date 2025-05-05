@@ -24,6 +24,7 @@ sort_option  = st.sidebar.selectbox("Sort comments by:", ["recent", "popular"])
 # ── MAIN INPUT & EXTRACTION ───────────────────────────────────────────────────────
 video_url = st.text_input("YouTube DJ Set URL", placeholder="https://www.youtube.com/watch?v=...")
 if st.button("Extract Tracks", key="extract_btn"):
+    # 1️⃣ Validate
     if not api_key:
         st.error("Please enter your OpenAI API key.")
         st.stop()
@@ -31,13 +32,13 @@ if st.button("Extract Tracks", key="extract_btn"):
         st.error("Please enter a YouTube URL.")
         st.stop()
 
-    # Step 1: Download comments
+    # 2️⃣ Step 1: Download comments
     st.info("Step 1: Downloading comments…")
     try:
         downloader = YoutubeCommentDownloader()
         sort_flag = SORT_BY_RECENT if sort_option == "recent" else SORT_BY_POPULAR
         raw_comments = downloader.get_comments_from_url(video_url, sort_by=sort_flag)
-        comments = [c.get("text", "") for c in raw_comments][:limit]
+        comments = [c.get("text","") for c in raw_comments][:limit]
         if not comments:
             raise RuntimeError("No comments found.")
         st.success(f"✅ {len(comments)} comments downloaded.")
@@ -45,12 +46,12 @@ if st.button("Extract Tracks", key="extract_btn"):
         st.error(f"Failed to download comments: {e}")
         st.stop()
 
-    # Step 2: Extract tracks + corrections via GPT
+    # 3️⃣ Step 2: Extract tracks + corrections via GPT
     st.info("Step 2: Extracting tracks via GPT…")
     client = OpenAI(api_key=api_key)
 
     system_prompt = """
-You are a world-class DJ-set tracklist curator with a complete music knowledge base.
+You are a world‑class DJ‑set tracklist curator with a complete music knowledge base.
 Given raw YouTube comment texts, do two things:
 1) Extract all timestamped track mentions in the form:
    MM:SS Artist - Track Title (optional remix/version and [label])
@@ -154,6 +155,19 @@ if "dj_tracks" in st.session_state:
             ydl_opts = {
                 "format": "bestaudio/best",
                 "outtmpl": os.path.join("downloads", "%(title)s.%(ext)s"),
+                "nocheckcertificate": True,
+                "geo_bypass": True,
+                "ignoreerrors": True,
+                "no_warnings": True,
+                "quiet": True,
+                "http_headers": {
+                    "User-Agent": (
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/116.0.0.0 Safari/537.36"
+                    ),
+                    "Referer": "https://www.youtube.com/",
+                },
             }
             try:
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -164,7 +178,7 @@ if "dj_tracks" in st.session_state:
             except Exception as e:
                 st.error(f"❌ Failed to download {label}: {e}")
 
-        # Bundle into ZIP
+        # Bundle into a ZIP
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w") as zf:
             for p in downloaded_paths:
