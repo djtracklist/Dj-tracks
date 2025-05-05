@@ -41,38 +41,47 @@ if st.button("Extract & Download"):
         st.error(f"Failed to download comments: {e}")
         st.stop()
 
-    # Step 2: Use GPT to extract tracks
+  # ── STEP 2: Filtered & enriched GPT extraction ──
+    import re
+
     st.info("Step 2: Extracting track names via GPT…")
-    client = OpenAI(api_key=api_key)
+    openai.api_key = api_key
 
-    system_prompt = """
-You are a world‑class DJ‑set tracklist specialist with access to a complete music knowledge base.
-Given a series of YouTube comment snippets (timestamps + partial track mentions), produce the full, ordered tracklist.
-Enrich each entry with:
-  • Full artist name  
-  • Exact track title  
-  • Version or remix details if known (e.g. “Tiga’s 1‑2‑3‑4 Remix”)  
-  • Label or release info in square brackets, if known  
-Respond **only** with a JSON array of objects in this format:
+    # 2.1) Prefilter comments to only those with a timestamp and a dash
+    pattern = re.compile(r"\\d{1,2}:\\d{2}.*-")
+    filtered = [c for c in comments if pattern.search(c)]
+    if not filtered:
+        st.warning("No timestamped comments found—using first 50 raw comments.")
+        filtered = comments[:50]
+    else:
+        st.success(f"✅ {len(filtered)} timestamped comments found, using top {min(len(filtered),50)}")
 
+    snippet = "\\n".join(filtered[:50])
+    st.text_area("Prompt input (filtered comments):", snippet, height=200)
+
+    # 2.2) New, richer system & example prompts
+    system_prompt = \"\"\"\
+You are a world‑class DJ‑set tracklist curator. Given comment lines each in the form:
+    TIMESTAMP Artist – Track Title (optional [Label] or (Remix/Version))
+Extract only those and return a JSON array of objects:
 [
   {
-    "artist":   "Artist Name",
-    "track":    "Track Title",
-    "version":  "Remix/Version or empty string",
-    "label":    "Label or empty string"
+    "artist":  "Artist Name",
+    "track":   "Track Title",
+    "version": "Remix/Version or empty string",
+    "label":   "Label or empty string"
   },
   …
 ]
-No extra keys, no explanatory text.
-"""
+No other keys or prose.\
+\"\"\"
 
-    few_shot_example = """
-### Example Input Comments:
+    few_shot = \"\"\"\
+### Example input comment lines:
 05:12 Floating Points – Birth 4000  
-15:34 Tiga & Hudson Mohawke – Untitled Codename Rimini  
+22:10 Tiga & Hudson Mohawke – Untitled Codename Rimini  
 
-### Example JSON Output:
+### Example JSON output:
 [
   {
     "artist":  "Floating Points",
@@ -87,12 +96,9 @@ No extra keys, no explanatory text.
     "label":   ""
   }
 ]
-"""
+\"\"\"
 
-    # bundle the first 50 comments
-    snippet = "\n".join(comments[:50])
-    user_block = f"Comments:\n{snippet}"
-
+    # 2.3) Send to GPT
     def extract_json(raw: str) -> str:
         if raw.startswith("```"):
             parts = raw.split("```")
@@ -100,13 +106,13 @@ No extra keys, no explanatory text.
                 return parts[1].strip()
         return raw.strip()
 
-    def ask_gpt(model_name: str):
-        resp = client.chat.completions.create(
+    def ask(model_name: str):
+        resp = openai.ChatCompletion.create(
             model=model_name,
             messages=[
-                {"role": "system",    "content": system_prompt},
-                {"role": "assistant", "content": few_shot_example},
-                {"role": "user",      "content": user_block},
+                {"role":"system",    "content":system_prompt},
+                {"role":"assistant", "content":few_shot},
+                {"role":"user",      "content":f"Comments:\\n{snippet}"},
             ],
             temperature=0,
         )
@@ -114,30 +120,30 @@ No extra keys, no explanatory text.
 
     tracks = None
     used_model = None
-    # try GPT-4, fallback to 3.5
     for m in [model_choice, "gpt-3.5-turbo"]:
         try:
-            raw = ask_gpt(m)
+            raw = ask(m)
             clean = extract_json(raw)
-            data = json.loads(clean)
-            if isinstance(data, list) and data:
-                tracks = data
+            parsed = json.loads(clean)
+            if isinstance(parsed, list) and parsed:
+                tracks = parsed
                 used_model = m
                 break
         except Exception:
             continue
 
     if not tracks:
-        st.error("❌ GPT failed to extract any enriched tracks.")
+        st.error("❌ GPT failed to extract any tracks.")
         st.stop()
 
-    st.success(f"✅ {len(tracks)} tracks identified and enriched via {used_model}:")
-    # Optionally: display in numbered form
+    st.success(f"✅ {len(tracks)} tracks identified via {used_model}")
+
+    # 2.4) Display enriched list
     for i, t in enumerate(tracks, start=1):
-        artist  = t.get("artist", "")
-        track   = t.get("track", "")
-        version = t.get("version", "")
-        label   = t.get("label", "")
+        artist  = t.get("artist","Unknown Artist")
+        track   = t.get("track","Unknown Track")
+        version = t.get("version","")
+        label   = t.get("label","")
         line = f"{i}. {artist} - {track}"
         if version:
             line += f" ({version})"
