@@ -24,7 +24,7 @@ sort_option  = st.sidebar.selectbox("Sort comments by:", ["recent", "popular"])
 # ── MAIN INPUT & EXTRACTION ───────────────────────────────────────────────────────
 video_url = st.text_input("YouTube DJ Set URL", placeholder="https://www.youtube.com/watch?v=...")
 if st.button("Extract Tracks", key="extract_btn"):
-    # 1️⃣ Validate
+    # Validate inputs
     if not api_key:
         st.error("Please enter your OpenAI API key.")
         st.stop()
@@ -32,13 +32,13 @@ if st.button("Extract Tracks", key="extract_btn"):
         st.error("Please enter a YouTube URL.")
         st.stop()
 
-    # 2️⃣ Step 1: Download comments
+    # Step 1: Download comments
     st.info("Step 1: Downloading comments…")
     try:
         downloader = YoutubeCommentDownloader()
         sort_flag = SORT_BY_RECENT if sort_option == "recent" else SORT_BY_POPULAR
         raw_comments = downloader.get_comments_from_url(video_url, sort_by=sort_flag)
-        comments = [c.get("text","") for c in raw_comments][:limit]
+        comments = [c.get("text", "") for c in raw_comments][:limit]
         if not comments:
             raise RuntimeError("No comments found.")
         st.success(f"✅ {len(comments)} comments downloaded.")
@@ -46,7 +46,7 @@ if st.button("Extract Tracks", key="extract_btn"):
         st.error(f"Failed to download comments: {e}")
         st.stop()
 
-    # 3️⃣ Step 2: Extract tracks + corrections via GPT
+    # Step 2: Extract tracks + corrections via GPT
     st.info("Step 2: Extracting tracks via GPT…")
     client = OpenAI(api_key=api_key)
 
@@ -155,6 +155,12 @@ if "dj_tracks" in st.session_state:
             ydl_opts = {
                 "format": "bestaudio/best",
                 "outtmpl": os.path.join("downloads", "%(title)s.%(ext)s"),
+                # Force MP3 extraction so you don't get .NA files
+                "postprocessors": [{
+                    "key": "FFmpegExtractAudio",
+                    "preferredcodec": "mp3",
+                    "preferredquality": "192",
+                }],
                 "nocheckcertificate": True,
                 "geo_bypass": True,
                 "ignoreerrors": True,
