@@ -41,7 +41,7 @@ if st.button("Extract & Download"):
         st.error(f"Failed to download comments: {e}")
         st.stop()
 
-# ── STEP 2: Rich GPT‑4 extraction with dual examples ──
+ # ── STEP 2: Rich GPT‑4 extraction with dual examples ──
     st.info("Step 2: Extracting track names via GPT with enriched few‑shot examples…")
     client = OpenAI(api_key=api_key)
 
@@ -168,7 +168,6 @@ Comments:
         if label:
             line += f" [{label}]"
         st.write(line)
-
 
     # Step 3: Track selection UI
     st.write("---")
