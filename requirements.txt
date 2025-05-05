@@ -1,4 +1,4 @@
 streamlit
 openai
 yt-dlp
-git+https://github.com/egbertbouman/youtube-comment-downloader.git
+dateparser
