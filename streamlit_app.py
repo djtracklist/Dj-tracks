@@ -24,32 +24,28 @@ sort_option  = st.sidebar.selectbox("Sort comments by:", ["recent", "popular"])
 # ── MAIN INPUT & EXTRACTION ───────────────────────────────────────────────────────
 video_url = st.text_input("YouTube DJ Set URL", placeholder="https://www.youtube.com/watch?v=...")
 if st.button("Extract Tracks", key="extract_btn"):
-    # Validate inputs
+    # Validate
     if not api_key:
-        st.error("Please enter your OpenAI API key.")
-        st.stop()
+        st.error("Please enter your OpenAI API key."); st.stop()
     if not video_url.strip():
-        st.error("Please enter a YouTube URL.")
-        st.stop()
+        st.error("Please enter a YouTube URL."); st.stop()
 
-    # Step 1: Download comments
+    # Step 1: Download comments
     st.info("Step 1: Downloading comments…")
     try:
         downloader = YoutubeCommentDownloader()
         sort_flag = SORT_BY_RECENT if sort_option == "recent" else SORT_BY_POPULAR
         raw_comments = downloader.get_comments_from_url(video_url, sort_by=sort_flag)
-        comments = [c.get("text", "") for c in raw_comments][:limit]
+        comments = [c.get("text","") for c in raw_comments][:limit]
         if not comments:
             raise RuntimeError("No comments found.")
         st.success(f"✅ {len(comments)} comments downloaded.")
     except Exception as e:
-        st.error(f"Failed to download comments: {e}")
-        st.stop()
+        st.error(f"Failed to download comments: {e}"); st.stop()
 
-    # Step 2: Extract tracks + corrections via GPT
+    # Step 2: GPT extraction
     st.info("Step 2: Extracting tracks via GPT…")
     client = OpenAI(api_key=api_key)
-
     system_prompt = """
 You are a world‑class DJ‑set tracklist curator with a complete music knowledge base.
 Given raw YouTube comment texts, do two things:
@@ -64,7 +60,6 @@ Return ONLY a JSON object with keys "tracks" and "corrections", each a list of o
   label   (string or empty)
 No extra keys or commentary.
 """
-
     few_shot = """
 ### Example Input:
 Comments:
@@ -85,7 +80,6 @@ Comments:
   ]
 }
 """
-
     snippet = "\n".join(comments[:100])
     st.text_area("❯ Prompt sent to GPT:", snippet, height=200)
 
@@ -100,22 +94,20 @@ Comments:
         resp = client.chat.completions.create(
             model=model_name,
             messages=[
-                {"role":"system",    "content":system_prompt},
-                {"role":"assistant", "content":few_shot},
-                {"role":"user",      "content":f"Comments:\n{snippet}"},
+                {"role":"system","content":system_prompt},
+                {"role":"assistant","content":few_shot},
+                {"role":"user","content":f"Comments:\n{snippet}"},
             ],
             temperature=0,
         )
         return resp.choices[0].message.content
 
-    tracks = []
-    corrections = []
-    used_model = None
+    tracks, corrections, used_model = [], [], None
     for m in [model_choice, "gpt-3.5-turbo"]:
         try:
-            raw = ask(m)
+            raw   = ask(m)
             clean = extract_json(raw)
-            parsed = json.loads(clean)
+            parsed= json.loads(clean)
             if isinstance(parsed, dict) and "tracks" in parsed and "corrections" in parsed:
                 tracks      = parsed["tracks"]
                 corrections = parsed["corrections"]
@@ -125,8 +117,7 @@ Comments:
             continue
 
     if used_model is None:
-        st.error("❌ GPT failed to extract any tracks or corrections.")
-        st.stop()
+        st.error("❌ GPT failed to extract any tracks or corrections."); st.stop()
 
     all_entries = tracks + corrections
     st.success(f"✅ {len(tracks)} tracks + {len(corrections)} corrections via {used_model}.")
@@ -154,8 +145,8 @@ if "dj_tracks" in st.session_state:
             st.write(f"▶️ {label}")
             ydl_opts = {
                 "format": "bestaudio/best",
-                "outtmpl": os.path.join("downloads", "%(title)s.%(ext)s"),
-                # Force MP3 extraction so you don't get .NA files
+                # <<< FORCE .mp3 in the filename template >>>
+                "outtmpl": os.path.join("downloads", "%(title)s.mp3"),
                 "postprocessors": [{
                     "key": "FFmpegExtractAudio",
                     "preferredcodec": "mp3",
@@ -178,13 +169,14 @@ if "dj_tracks" in st.session_state:
             try:
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     info = ydl.extract_info(f"ytsearch1:{label}", download=True)
+                    # Because outtmpl forces .mp3, prepare_filename now returns .mp3
                     path = ydl.prepare_filename(info)
                     downloaded_paths.append(path)
                 st.success(f"✅ {os.path.basename(path)}")
             except Exception as e:
                 st.error(f"❌ Failed to download {label}: {e}")
 
-        # Bundle into a ZIP
+        # Bundle into ZIP
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w") as zf:
             for p in downloaded_paths:
