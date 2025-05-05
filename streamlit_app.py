@@ -4,6 +4,7 @@ import sys
 import os
 import json
 import openai
+from itertools import islice
 
 # Ensure dateparser is available
 try:
@@ -28,7 +29,9 @@ if st.button("Extract Tracks & Download MP3s"):
     st.info("Step 1: Downloading YouTube comments directly...")
     try:
         downloader = YoutubeCommentDownloader()
-        raw_comments = downloader.get_comments_from_url(video_url, sort_by=SORT_BY_RECENT, limit=100)
+        raw_comments = list(islice(
+            downloader.get_comments_from_url(video_url, sort_by=SORT_BY_RECENT), 100
+        ))
         comments = [c["text"] for c in raw_comments if "text" in c]
 
         if not comments:
