@@ -1,6 +1,7 @@
-import streamlit as st
-import subprocess
+import os
 import json
+import subprocess
+import streamlit as st
 import openai
 import yt_dlp
 
@@ -8,20 +9,20 @@ st.set_page_config(page_title="DJ Set Tracklist & MP3 Downloader", layout="wide"
 st.title("YouTube DJ Set Tracklist Extractor & MP3 Downloader")
 
 # --- Inputs ---
-url        = st.text_input("YouTube DJ Set URL")
-model      = st.selectbox("Choose OpenAI model:", ["gpt-4", "gpt-3.5-turbo"])
-api_key    = st.text_input("Enter your OpenAI API Key:", type="password")
-download_mp3 = st.checkbox("Enable MP3 download")
+url          = st.text_input("YouTube DJ Set URL")
+model_choice = st.selectbox("Choose OpenAI model:", ["gpt-4", "gpt-3.5-turbo"])
+api_key      = st.text_input("Enter your OpenAI API Key:", type="password")
+enable_dl    = st.checkbox("Enable MP3 download")
 
-# --- Step 1: Download comments (unchanged) ---
 if st.button("Extract Tracks & Download MP3s"):
+    # 1) Validate
     if not url or not api_key:
         st.error("Please provide both a YouTube URL and your OpenAI API key.")
         st.stop()
 
-    st.info("Step 1: Downloading YouTube comments…")
+    # 2) Download comments (unchanged)
+    st.info("Step 1: Downloading comments…")
     try:
-        # <<< This block is frozen exactly as your working version >>>
         result = subprocess.run(
             ["youtube-comment-downloader", "--url", url, "--sort", "0", "--limit", "100"],
             capture_output=True, text=True, check=True
@@ -32,10 +33,10 @@ if st.button("Extract Tracks & Download MP3s"):
         st.error(f"Failed to download comments: {e}")
         st.stop()
 
-    # --- Step 2: Few-shot GPT extraction ---
-    st.info("Step 2: Extracting track names via GPT…")
+    # 3) Few‑shot GPT extraction
+    st.info("Step 2: Extracting track names via GPT…")
     openai.api_key = api_key
-    # build snippet
+
     snippet = "\n".join(c.get("text","") for c in comments[:50])
 
     system_prompt = (
@@ -55,68 +56,70 @@ if st.button("Extract Tracks & Download MP3s"):
         "  {\"artist\":\"Decius\",\"track\":\"Hashtag Booty Finger [Decius Trax]\"}\n"
         "]"
     )
-    user_content = f"Comments:\n{snippet}"
+    user_block = f"Comments:\n{snippet}"
 
-    def extract_json(raw: str) -> str:
-        # strip markdown fences if present
+    def clean_json(raw: str) -> str:
         if raw.startswith("```"):
             parts = raw.split("```")
             if len(parts) >= 3:
                 return parts[1].strip()
         return raw.strip()
 
-    def call_model(m: str) -> str:
+    def call_model(name: str) -> str:
         resp = openai.ChatCompletion.create(
-            model=m,
+            model=name,
             messages=[
-                {"role":"system",   "content":system_prompt},
-                {"role":"assistant","content":few_shot_example},
-                {"role":"user",     "content":user_content},
+                {"role":"system",    "content":system_prompt},
+                {"role":"assistant", "content":few_shot_example},
+                {"role":"user",      "content":user_block},
             ],
             temperature=0
         )
         return resp.choices[0].message.content
 
-    # try primary model, then fallback if empty/invalid
-    raw = call_model(model)
-    clean = extract_json(raw)
+    # Try primary model, then fallback
+    raw_output = call_model(model_choice)
+    cleaned = clean_json(raw_output)
     try:
-        tracks = json.loads(clean)
+        tracks = json.loads(cleaned)
         if not isinstance(tracks, list) or not tracks:
             raise ValueError("Empty or invalid list")
-        st.success(f"✅ {len(tracks)} tracks identified via {model}.")
+        st.success(f"✅ {len(tracks)} tracks identified via {model_choice}.")
     except Exception:
-        if model == "gpt-4":
-            st.warning("GPT-4 returned invalid JSON—retrying with gpt-3.5-turbo…")
-            raw = call_model("gpt-3.5-turbo")
-            clean = extract_json(raw)
+        if model_choice == "gpt-4":
+            st.warning("GPT-4 failed to produce valid JSON — retrying with gpt-3.5-turbo…")
+            raw_output = call_model("gpt-3.5-turbo")
+            cleaned = clean_json(raw_output)
             try:
-                tracks = json.loads(clean)
+                tracks = json.loads(cleaned)
                 if not isinstance(tracks, list) or not tracks:
                     raise ValueError
                 st.success("✅ Tracks identified via gpt-3.5-turbo.")
-            except Exception as e:
-                st.error(f"Both models failed: {e}")
+            except Exception as err:
+                st.error(f"Both models failed: {err}")
                 st.stop()
         else:
             st.error("Failed to parse GPT output.")
             st.stop()
 
-    # --- Step 3: UI for selection & download ---
+    # 4) Selection UI
     if not tracks:
         st.warning("No tracks extracted.")
         st.stop()
 
     st.write("---")
     st.write("### Select tracks to download")
-    options = [
-        f\"{t.get('artist','Unknown Artist')} — {t.get('track','Unknown Track')}\" 
-        for t in tracks
-    ]
+    options = []
+    for t in tracks:
+        artist = t.get("artist", "Unknown Artist")
+        title  = t.get("track",  "Unknown Track")
+        options.append(f"{artist} - {title}")
+
     selected = st.multiselect("Choose tracks:", options, default=options)
 
-    if download_mp3 and selected:
-        st.info("Step 4: Downloading selected MP3s…")
+    # 5) Download MP3s
+    if enable_dl and selected:
+        st.info("Step 3: Downloading MP3s…")
         os.makedirs("downloads", exist_ok=True)
         ydl_opts = {
             "format":"bestaudio/best",
@@ -128,13 +131,13 @@ if st.button("Extract Tracks & Download MP3s"):
             ],
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            for q in selected:
-                st.write(f"▶ {q}")
+            for query in selected:
+                st.write(f"▶️ {query}")
                 try:
-                    ydl.download([f"ytsearch1:{q}"])
+                    ydl.download([f"ytsearch1:{query}"])
                     st.write("Done")
-                except Exception as e:
-                    st.error(f"Failed: {e}")
+                except Exception as dl_err:
+                    st.error(f"Failed: {dl_err}")
         st.success("🎉 All selected tracks saved to `downloads/`.")
-    elif download_mp3:
+    elif enable_dl:
         st.warning("No tracks selected for download.")
