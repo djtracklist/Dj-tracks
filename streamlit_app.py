@@ -1,98 +1,89 @@
 import os
 import json
+import subprocess
 import streamlit as st
-import yt_dlp
 import openai
-from youtube_comment_downloader import YoutubeCommentDownloader, SORT_BY_RECENT
 
-# --- App Configuration ---
 st.set_page_config(page_title="DJ Set Tracklist & MP3 Downloader", layout="centered")
 st.title("🎧 DJ Set Tracklist Extractor & MP3 Downloader")
 
 # --- Inputs ---
-video_url = st.text_input(
-    "Enter YouTube DJ Set URL",
-    placeholder="https://www.youtube.com/watch?v=..."
-)
-model = st.selectbox(
-    "Choose OpenAI model",
-    ["gpt-4", "gpt-3.5-turbo"]
-)
-api_key = st.text_input(
-    "Enter your OpenAI API Key",
-    type="password"
-)
+video_url = st.text_input("Enter YouTube DJ Set URL", placeholder="https://www.youtube.com/watch?v=...")
+model = st.selectbox("Choose OpenAI model", ["gpt-4", "gpt-3.5-turbo"])
+api_key = st.text_input("Enter your OpenAI API Key", type="password")
 
-# --- Main Action ---
+# Ensure download directory exists
+DOWNLOAD_DIR = "downloads"
+os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+
 if st.button("Extract Tracks & Download MP3s"):
-    # Validate inputs
+    # Validate
     if not video_url or not api_key:
         st.error("⚠️ Please enter both a YouTube URL and your OpenAI API key.")
         st.stop()
 
-    # Step 1: Download Comments
+    # Step 1: Download comments via CLI
     st.info("Step 1: Downloading YouTube comments...")
     try:
-        downloader = YoutubeCommentDownloader()
-        raw_comments = []
-        for c in downloader.get_comments_from_url(
-            video_url,
-            sort_by=SORT_BY_RECENT
-        ):
-            # collect up to 100 comments
-            raw_comments.append(c.get("text", ""))
-            if len(raw_comments) >= 100:
-                break
-        if not raw_comments:
-            raise ValueError("No comments returned by downloader.")
-        st.success(f"✅ {len(raw_comments)} comments downloaded.")
+        cmd = [
+            "youtube-comment-downloader",
+            "--url", video_url,
+            "--sort", "recent",
+            "--limit", "100"
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        comments_data = json.loads(result.stdout)
+        comments = [c.get("text", "") for c in comments_data]
+        if not comments:
+            raise ValueError("No comments returned by CLI.")
+        st.success(f"✅ {len(comments)} comments downloaded.")
     except Exception as e:
         st.error(f"Failed to download comments: {e}")
         st.stop()
 
-    # Step 2: Extract Tracks via GPT
+    # Step 2: Extract tracks via GPT
     st.info("Step 2: Extracting track names using GPT...")
     openai.api_key = api_key
-    snippet = "\n".join(raw_comments[:50])
+    snippet = "\n".join(comments[:50])
     prompt = (
         "Extract any track names and artists mentioned in the text below, "
-        "and return them as a JSON array of objects with fields "
-        '"artist" and "track".\n\nComments:\n' + snippet
+        "and return them as a JSON list of objects with fields 'artist' and 'track'.\n\n"
+        "Comments:\n" + snippet
     )
     try:
-        response = openai.ChatCompletion.create(
+        resp = openai.ChatCompletion.create(
             model=model,
-            messages=[{"role": "user", "content": prompt}]
+            messages=[{"role":"user","content": prompt}],
+            temperature=0
         )
-        raw_output = response.choices[0].message.content.strip()
+        raw_output = resp.choices[0].message.content.strip()
         st.code(raw_output, language="json")
         tracks = json.loads(raw_output)
         if not isinstance(tracks, list) or not tracks:
-            raise ValueError("Parsed JSON is empty or not a list.")
+            raise ValueError("Empty or invalid JSON list.")
         st.success(f"✅ {len(tracks)} tracks identified.")
     except Exception as e:
-        st.error(f"GPT step failed or returned invalid JSON: {e}")
+        st.error(f"Failed to extract tracks: {e}")
         st.stop()
 
-    # Step 3: Display & Select
+    # Step 3: Display and select tracks
     st.write("---")
     st.write("### Select tracks to download")
-    to_download = []
+    selected = []
     for idx, t in enumerate(tracks):
         artist = t.get("artist", "").strip() or "Unknown Artist"
         track  = t.get("track", "").strip()  or "Unknown Track"
         label  = f"{artist} — {track}"
         if st.checkbox(label, key=idx, value=True):
-            to_download.append(label)
+            selected.append(label)
 
-    # Step 4: Download Selected via yt-dlp
-    if to_download:
+    # Step 4: Download selected tracks as MP3
+    if selected:
         if st.button("Download Selected as MP3"):
             st.info("Step 4: Downloading selected tracks…")
-            os.makedirs("downloads", exist_ok=True)
             ydl_opts = {
                 "format": "bestaudio/best",
-                "outtmpl": os.path.join("downloads", "%(title)s.%(ext)s"),
+                "outtmpl": os.path.join(DOWNLOAD_DIR, "%(title)s.%(ext)s"),
                 "noplaylist": True,
                 "quiet": True,
                 "postprocessors": [{
@@ -101,14 +92,14 @@ if st.button("Extract Tracks & Download MP3s"):
                     "preferredquality": "192",
                 }],
             }
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                for q in to_download:
+            with __import__('yt_dlp').YoutubeDL(ydl_opts) as ydl:
+                for q in selected:
                     st.write(f"▶️ Downloading: {q}")
                     try:
                         ydl.download([f"ytsearch1:{q}"])
                         st.write("✅ Done")
                     except Exception as e:
-                        st.error(f"Failed: {q} ({e})")
-            st.success("🎉 All selected tracks downloaded to the `downloads/` folder.")
+                        st.error(f"Failed to download {q}: {e}")
+            st.success(f"🎉 All selected tracks downloaded to '{DOWNLOAD_DIR}/'.")
     else:
-        st.info("No tracks selected. Check the boxes above to enable download.")
+        st.info("No tracks selected for download.")
