@@ -210,7 +210,25 @@ Comments:
             )
     else:
         st.info("Select one or more tracks above to enable downloading.")
-        
-  
+    # Step 4: Download MP3s
+    if enable_dl:
+        if not selected:
+            st.warning("No tracks selected.")
+        else:
+            st.info("Step 3: Downloading MP3s…")
+            os.makedirs("downloads", exist_ok=True)
+            for q in selected:
+                st.write(f"▶️ {q}")
+                ydl_opts = {
+                    "format": "bestaudio/best",
+                    "outtmpl": os.path.join("downloads", "%(title)s.%(ext)s"),
+                }
+                try:
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        info = ydl.extract_info(f"ytsearch1:{q}", download=True)
+                        fn = ydl.prepare_filename(info)
+                    st.success(f"✅ Downloaded to `{fn}`")
+                except Exception as e:
+                    st.error(f"❌ Failed to download {q}: {e}")
 
     st.balloons()
