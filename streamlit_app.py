@@ -1,64 +1,75 @@
+import subprocess
+import sys
+
+# Ensure dateparser is installed
+try:
+    import dateparser
+except ImportError:
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "dateparser"])
+    import dateparser
+
 import streamlit as st
+import openai
+import json
 import os
 import subprocess
-import json
-import openai
 
 st.title("🎵 DJ Set Track Extractor + MP3 Downloader")
 
-youtube_url = st.text_input("Enter YouTube DJ Set URL:")
+video_url = st.text_input("Enter YouTube DJ Set URL:")
+
 model = st.selectbox("Choose OpenAI model:", ["gpt-4", "gpt-3.5-turbo"])
+
 api_key = st.text_input("Enter your OpenAI API Key:", type="password")
 
 if st.button("Extract Tracks & Download MP3s"):
-    with st.spinner("Processing..."):
+    if not video_url or not api_key:
+        st.error("Please enter both the YouTube URL and your OpenAI API key.")
+    else:
+        st.info("Processing...")
 
-        # Step 1: Download comments
-        st.markdown("### Step 1: Downloading YouTube comments...")
-        result = subprocess.run([
-            "python3", "-m", "youtube_comment_downloader",
-            "--url", youtube_url,
-            "--output", "comments/comments.json",
-            "--limit", "200"
-        ], capture_output=True, text=True)
+        st.markdown("**Step 1: Downloading YouTube comments...**")
+        result = subprocess.run(
+            ["python3", "-m", "youtube_comment_downloader", "--url", video_url,
+             "--output", "comments/comments.json", "--pretty", "--limit", "200"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+        )
 
         st.text("STDOUT:")
-        st.code(result.stdout)
-        st.text("STDERR:")
-        st.code(result.stderr)
+        st.text(result.stdout)
 
-        # Check if file was created
+        st.text("STDERR:")
+        st.text(result.stderr)
+
         if not os.path.exists("comments/comments.json"):
             st.error("No comments were downloaded. Please check the YouTube URL or try a different video.")
-            st.stop()
+        else:
+            st.success("Comments downloaded successfully!")
 
-        # Step 2: Extract track names using OpenAI
-        st.markdown("### Step 2: Extracting Track Names...")
-        with open("comments/comments.json", "r", encoding="utf-8") as f:
-            data = json.load(f)
+            with open("comments/comments.json", "r", encoding="utf-8") as f:
+                comments_data = json.load(f)
 
-        comments = [entry["text"] for entry in data]
-        joined_comments = "\n".join(comments[:50])  # limit for prompt size
+            comments_text = "\n".join(entry["text"] for entry in comments_data)
 
-        openai.api_key = api_key
-        prompt = f"""
-You are a helpful assistant for extracting tracklists from DJ sets. The following are YouTube comments on a DJ set video.
+            prompt = (
+                "You are an expert at recognising tracks from DJ sets based on comments.\n"
+                "Extract any track names and artists mentioned, and return them as a list."
+            )
 
-Extract any track names and artists mentioned, and return them as a list. 
-Avoid repetitions. Ignore irrelevant comments.
-
-Comments:
-{joined_comments}
-"""
-
-        try:
+            openai.api_key = api_key
             response = openai.ChatCompletion.create(
                 model=model,
-                messages=[{"role": "user", "content": prompt}]
+                messages=[
+                    {"role": "system", "content": prompt},
+                    {"role": "user", "content": comments_text}
+                ]
             )
-            extracted = response.choices[0].message["content"]
+
+            extracted = response["choices"][0]["message"]["content"]
             st.markdown("### Suggested Tracks:")
-            st.code(extracted)
-        except Exception as e:
-            st.error(f"OpenAI API Error: {e}")
-            st.stop()
+            st.text(extracted)
+
+            with open("tracks.txt", "w") as f:
+                f.write(extracted)
+
+            st.success("All done!")
