@@ -154,14 +154,41 @@ Comments:
         if label:
             line += f" [{label}]"
         st.write(line)
-    # Step 3: Track selection UI
+ # ── STEP 3: Selection UI & MP3 download ──
     st.write("---")
     st.write("### Select tracks to download")
+    
+    # Build labels from all_entries (tracks + corrections)
     labels = [
-        f"{t.get('artist', 'Unknown Artist')} - {t.get('track', 'Unknown Track')}"
-        for t in tracks
+        f"{e.get('artist','Unknown Artist')} - {e.get('track','Unknown Track')}"
+        for e in all_entries
     ]
-    selected = st.multiselect("Choose tracks:", options=labels, default=labels)
+    
+    selected = st.multiselect(
+        "Choose tracks:",
+        options=labels,
+        default=labels,
+    )
+
+    if enable_dl:
+        if not selected:
+            st.warning("No tracks selected.")
+        else:
+            st.info("Step 3: Downloading MP3s…")
+            os.makedirs("downloads", exist_ok=True)
+            for label in selected:
+                st.write(f"▶️ {label}")
+                ydl_opts = {
+                    "format": "bestaudio/best",
+                    "outtmpl": os.path.join("downloads","%(title)s.%(ext)s"),
+                }
+                try:
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        info = ydl.extract_info(f"ytsearch1:{label}", download=True)
+                        fn = ydl.prepare_filename(info)
+                    st.success(f"✅ Downloaded to `{fn}`")
+                except Exception as e:
+                    st.error(f"❌ Failed to download {label}: {e}")
 
     # Step 4: Download MP3s
     if enable_dl:
