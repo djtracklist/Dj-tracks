@@ -30,7 +30,7 @@ if st.button("Extract Tracks", key="extract_btn"):
     if not video_url.strip():
         st.error("Please enter a YouTube URL."); st.stop()
 
-    # Step 1: Download comments
+    # Step 1: Download comments
     st.info("Step 1: Downloading comments…")
     try:
         downloader = YoutubeCommentDownloader()
@@ -43,7 +43,7 @@ if st.button("Extract Tracks", key="extract_btn"):
     except Exception as e:
         st.error(f"Failed to download comments: {e}"); st.stop()
 
-    # Step 2: GPT extraction
+    # Step 2: GPT extraction
     st.info("Step 2: Extracting tracks via GPT…")
     client = OpenAI(api_key=api_key)
     system_prompt = """
@@ -105,9 +105,9 @@ Comments:
     tracks, corrections, used_model = [], [], None
     for m in [model_choice, "gpt-3.5-turbo"]:
         try:
-            raw   = ask(m)
-            clean = extract_json(raw)
-            parsed= json.loads(clean)
+            raw    = ask(m)
+            clean  = extract_json(raw)
+            parsed = json.loads(clean)
             if isinstance(parsed, dict) and "tracks" in parsed and "corrections" in parsed:
                 tracks      = parsed["tracks"]
                 corrections = parsed["corrections"]
@@ -145,7 +145,7 @@ if "dj_tracks" in st.session_state:
             st.write(f"▶️ {label}")
             ydl_opts = {
                 "format": "bestaudio/best",
-                # <<< FORCE .mp3 in the filename template >>>
+                # force .mp3 extension
                 "outtmpl": os.path.join("downloads", "%(title)s.mp3"),
                 "postprocessors": [{
                     "key": "FFmpegExtractAudio",
@@ -169,19 +169,26 @@ if "dj_tracks" in st.session_state:
             try:
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     info = ydl.extract_info(f"ytsearch1:{label}", download=True)
-                    # Because outtmpl forces .mp3, prepare_filename now returns .mp3
                     path = ydl.prepare_filename(info)
                     downloaded_paths.append(path)
                 st.success(f"✅ {os.path.basename(path)}")
             except Exception as e:
                 st.error(f"❌ Failed to download {label}: {e}")
 
-        # Bundle into ZIP
+        # ── Bundle into ZIP safely ────────────────────────────────────────────────
         buf = io.BytesIO()
+        missing = []
         with zipfile.ZipFile(buf, "w") as zf:
             for p in downloaded_paths:
-                zf.write(p, arcname=os.path.basename(p))
+                if os.path.exists(p):
+                    zf.write(p, arcname=os.path.basename(p))
+                else:
+                    missing.append(p)
         buf.seek(0)
+
+        if missing:
+            skipped = ", ".join(os.path.basename(m) for m in missing)
+            st.warning(f"⚠️ Skipped missing files: {skipped}")
 
         st.download_button(
             "Download All as ZIP",
@@ -190,5 +197,6 @@ if "dj_tracks" in st.session_state:
             mime="application/zip",
             key="zip_dl",
         )
+
     elif not selected:
         st.info("Select one or more tracks above to enable download.")
