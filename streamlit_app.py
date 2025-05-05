@@ -1,46 +1,42 @@
-
 import streamlit as st
-import openai
-from openai import OpenAI
-import os
 import json
-from youtube_comment_downloader import downloader as yd
+from youtube_comment_downloader import YoutubeCommentDownloader, SORT_BY_RECENT
+import openai
 
-st.title("DJ Set Track Extractor + MP3 Downloader")
+st.title("🎵 DJ Set Track Extractor + MP3 Downloader")
 
-video_url = st.text_input("Enter YouTube DJ Set URL:")
-model_choice = st.selectbox("Choose OpenAI model:", ["gpt-3.5-turbo", "gpt-4"])
+url = st.text_input("Enter YouTube DJ Set URL:")
+model = st.selectbox("Choose OpenAI model:", ["gpt-4", "gpt-3.5-turbo"])
 api_key = st.text_input("Enter your OpenAI API Key:", type="password")
 
-if st.button("Extract Tracks & Download MP3s") and video_url and api_key:
-    st.info("Step 1: Downloading YouTube comments directly...")
-
-    try:
-        comments = []
-        for c in yd.YoutubeCommentDownloader().get_comments_from_url(video_url):
-            comments.append(c["text"])
-        if not comments:
-            st.error("No comments found.")
-        else:
+if st.button("Extract Tracks & Download MP3s") and url and api_key:
+    with st.spinner("Step 1: Downloading YouTube comments..."):
+        downloader = YoutubeCommentDownloader()
+        try:
+            comments = [c["text"] for c in downloader.get_comments_from_url(url, sort_by=SORT_BY_RECENT)]
             st.success(f"{len(comments)} comments downloaded.")
+        except Exception as e:
+            st.error(f"Failed to get comments: {e}")
+            st.stop()
 
-            st.info("Step 2: Extracting track names using GPT...")
+    with st.spinner("Step 2: Extracting track names using GPT..."):
+        openai.api_key = api_key
+        prompt = f"""Extract a list of distinct song titles and artists from the following YouTube comments. 
+Only return track names and their corresponding artist if clearly mentioned, without extra text or formatting.
 
-            client = OpenAI(api_key=api_key)
-            prompt = (
-                "From the following YouTube comments, extract a list of distinct "
-                "track names and their corresponding artists. Format as 'Track - Artist' if possible.\n\n"
-                + "\n".join(comments[:100])
+Comments:
+{json.dumps(comments[:100])}
+
+Return the result as a simple list with this format:
+Artist - Track Name"""
+
+        try:
+            response = openai.ChatCompletion.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}]
             )
-
-            response = client.chat.completions.create(
-                model=model_choice,
-                messages=[
-                    {"role": "user", "content": prompt}
-                ]
-            )
-            result = response.choices[0].message.content
+            output = response["choices"][0]["message"]["content"]
             st.success("Tracks identified:")
-            st.text(result)
-    except Exception as e:
-        st.error(f"An error occurred: {e}")
+            st.text_area("Tracklist", output, height=300)
+        except Exception as e:
+            st.error(f"OpenAI API error: {e}")
