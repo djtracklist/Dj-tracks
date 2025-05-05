@@ -29,8 +29,14 @@ if run_button and video_url and api_key:
         "--limit", "100"
     ])
 
+    st.write("Checking if comments were downloaded...")
+    comments_path = "comments/comments.json"
+    if not os.path.exists(comments_path):
+        st.error("No comments were downloaded. Please check the YouTube URL or try a different video.")
+        st.stop()
+
     st.write("Step 2: Extracting track names using GPT...")
-    with open("comments/comments.json", "r", encoding="utf-8") as f:
+    with open(comments_path, "r", encoding="utf-8") as f:
         comments = [json.loads(line)["text"] for line in f]
 
     prompt = (
