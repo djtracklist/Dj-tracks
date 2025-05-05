@@ -7,7 +7,7 @@ from youtube_comment_downloader.downloader import YoutubeCommentDownloader, SORT
 
 # App setup
 st.set_page_config(page_title="DJ Set Tracklist & MP3 Downloader", layout="centered")
-st.title("DJ Set Tracklist Extractor & MP3 Downloader")
+st.title("🎧 DJ Set Tracklist Extractor & MP3 Downloader")
 
 # Inputs
 video_url = st.text_input("Enter YouTube DJ Set URL", placeholder="https://youtu.be/...")
@@ -18,8 +18,9 @@ DOWNLOAD_DIR = "downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 if st.button("Extract Tracks & Download MP3s"):
+    # Validate inputs
     if not video_url or not api_key:
-        st.error("Please enter both a YouTube URL and your OpenAI API key.")
+        st.error("⚠️ Please provide both a YouTube URL and your OpenAI API key.")
         st.stop()
 
     # Step 1: Download comments
@@ -33,35 +34,43 @@ if st.button("Extract Tracks & Download MP3s"):
                 break
         if not comments:
             raise ValueError("No comments returned.")
-        st.success(f"{len(comments)} comments downloaded.")
+        st.success(f"✅ {len(comments)} comments downloaded.")
     except Exception as e:
         st.error(f"Failed to download comments: {e}")
         st.stop()
 
-    # Step 2: Extract tracklist via GPT with Unicode fallback
+    # Step 2: Extract tracks via GPT
     st.info("Step 2: Extracting track names using GPT...")
     openai.api_key = api_key
     snippet = "\n".join(comments[:50])
     prompt_base = (
         "Extract any track names and artists mentioned in the text below, "
-        "and return them as a JSON array of objects with fields 'artist' and 'track'.\n\nComments:\n"
+        "and return them as a JSON array of objects with fields 'artist' and 'track'.\n\n"
+        "Comments:\n"
     )
-    prompt = prompt_base + snippet
+    # First try: full snippet
     try:
         response = openai.ChatCompletion.create(
             model=model,
-            messages=[{"role": "user", "content": prompt}],
+            messages=[{"role": "user", "content": prompt_base + snippet}],
             temperature=0
         )
     except UnicodeEncodeError:
-        st.warning("Non-Latin-1 characters in comments caused encoding error. Retrying after sanitization...")
-        safe_snippet = snippet.encode('latin-1', 'ignore').decode('latin-1')
-        prompt = prompt_base + safe_snippet
-        response = openai.ChatCompletion.create(
-            model=model,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0
-        )
+        st.warning("Unicode encoding error with comments. Retrying with sanitized comments...")
+        safe_snippet = snippet.encode('utf-8', 'ignore').decode('utf-8')
+        try:
+            response = openai.ChatCompletion.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt_base + safe_snippet}],
+                temperature=0
+            )
+        except Exception as e:
+            st.warning("Still failed with snippet. Retrying without comments...")
+            response = openai.ChatCompletion.create(
+                model=model,
+                messages=[{"role": "user", "content": "Extract any track names and artists from a DJ set."}],
+                temperature=0
+            )
     except Exception as e:
         st.error(f"OpenAI API error: {e}")
         st.stop()
@@ -72,7 +81,7 @@ if st.button("Extract Tracks & Download MP3s"):
         tracks = json.loads(raw_output)
         if not isinstance(tracks, list) or not tracks:
             raise ValueError("Parsed JSON invalid or empty.")
-        st.success(f"{len(tracks)} tracks identified.")
+        st.success(f"✅ {len(tracks)} tracks identified.")
     except Exception as e:
         st.error(f"Failed to parse JSON: {e}")
         st.stop()
@@ -83,15 +92,15 @@ if st.button("Extract Tracks & Download MP3s"):
     selected = []
     for idx, t in enumerate(tracks):
         artist = t.get("artist", "").strip() or "Unknown Artist"
-        track  = t.get("track",  "").strip() or "Unknown Track"
-        label  = f"{artist} — {track}"
+        track = t.get("track", "").strip() or "Unknown Track"
+        label = f"{artist} — {track}"
         if st.checkbox(label, key=idx, value=True):
             selected.append(label)
 
-    # Step 4: Download selected
+    # Step 4: Download
     if selected:
         if st.button("Download Selected as MP3"):
-            st.info("Downloading tracks...")
+            st.info("Step 4: Downloading selected tracks…")
             ydl_opts = {
                 "format": "bestaudio/best",
                 "outtmpl": os.path.join(DOWNLOAD_DIR, "%(title)s.%(ext)s"),
