@@ -1,72 +1,69 @@
 import streamlit as st
-import subprocess
 import openai
-import os
-import json
+from openai import OpenAI
+import yt_dlp
+import re
 
-st.title("🎧 DJ Set Track Extractor + MP3 Downloader")
+# Set page config
+st.set_page_config(page_title="DJ Set Track Extractor + MP3 Downloader", layout="centered")
 
+# App title
+st.title("🎶 DJ Set Track Extractor + MP3 Downloader")
+
+# Inputs
 video_url = st.text_input("Enter YouTube DJ Set URL:")
 model = st.selectbox("Choose OpenAI model:", ["gpt-4", "gpt-3.5-turbo"])
 api_key = st.text_input("Enter your OpenAI API Key:", type="password")
 
+# Download comments function
+def get_youtube_comments(video_url, max_comments=100):
+    ydl_opts = {
+        'quiet': True,
+        'skip_download': True,
+        'extract_flat': True,
+        'force_generic_extractor': True
+    }
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        try:
+            info = ydl.extract_info(video_url, download=False)
+            comments = info.get("comments", [])
+            return [c["text"] for c in comments[:max_comments]]
+        except Exception as e:
+            return []
+
+# Call OpenAI with better prompt
+def extract_tracks(comments, api_key, model):
+    client = OpenAI(api_key=api_key)
+    joined = "\n".join(comments)
+    prompt = f"""
+You are a music expert. Analyze the following YouTube comments from a DJ set video and extract as many distinct track names and/or artists as mentioned by commenters. Use whatever format you can infer (e.g. Artist - Track, Track by Artist, or even just Track if no artist is given). Be forgiving in format and avoid skipping entries that seem partial or ambiguous. Return a clean, deduplicated list in the format:
+
+1. Track Name - Artist (if known)
+2. Track Name (if artist not known)
+
+Only include music-related references. Here are the comments:
+"""
+{joined}
+"""
+"""
+    response = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": prompt}]
+    )
+    return response.choices[0].message.content
+
+# Main button action
 if st.button("Extract Tracks & Download MP3s"):
     if not video_url or not api_key:
-        st.error("Please provide both a YouTube URL and an OpenAI API key.")
+        st.error("Please enter both the YouTube URL and your OpenAI API key.")
     else:
-        with st.container():
-            st.info("Step 1: Downloading YouTube comments directly...")
-
-            try:
-                from youtube_comment_downloader.downloader import YoutubeCommentDownloader
-
-                downloader = YoutubeCommentDownloader()
-                comments_gen = downloader.get_comments_from_url(video_url)
-
-                comments = []
-                for count, comment in zip(range(50), comments_gen):  # Limit to 50 comments for clarity
-                    comments.append(comment["text"])
-
-                if not comments:
-                    st.error("No comments found.")
-                    st.stop()
-
+        with st.spinner("Step 1: Downloading YouTube comments directly..."):
+            comments = get_youtube_comments(video_url)
+            if comments:
                 st.success(f"{len(comments)} comments downloaded.")
-
-                st.info("Step 2: Extracting track names using GPT...")
-
-                openai.api_key = api_key
-                comment_block = "\n".join(comments)
-
-                refined_prompt = f"""You are helping identify music tracks from comments under a DJ set video.
-
-Each line should follow the format:
-Artist - Track
-
-Only list actual tracks (no guesses or vague mentions). If either the artist or track name is missing or unclear, skip the entry entirely.
-
-Here are some YouTube comments from the DJ set:
-
-{comment_block}
-
-Extract the tracks:
-"""    
-
-                response = openai.ChatCompletion.create(
-                    model=model,
-                    messages=[
-                        {"role": "user", "content": refined_prompt}
-                    ],
-                    temperature=0.2,
-                    max_tokens=600
-                )
-
-                tracks = response["choices"][0]["message"]["content"]
-                if tracks.strip():
+                with st.spinner("Step 2: Extracting track names using GPT..."):
+                    result = extract_tracks(comments, api_key, model)
                     st.success("Tracks identified:")
-                    st.markdown(tracks)
-                else:
-                    st.warning("No tracks were identified. Try another video.")
-
-            except Exception as e:
-                st.error(f"Failed to extract tracks: {e}")
+                    st.markdown(result)
+            else:
+                st.error("Failed to retrieve YouTube comments. Please check the URL.")
