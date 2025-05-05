@@ -4,7 +4,6 @@ import sys
 import os
 import json
 from itertools import islice
-import openai
 
 # Ensure dateparser is available
 try:
@@ -14,6 +13,7 @@ except ImportError:
     import dateparser
 
 from youtube_comment_downloader.downloader import YoutubeCommentDownloader, SORT_BY_RECENT
+import openai
 
 st.title("🎵 DJ Set Track Extractor + MP3 Downloader")
 
@@ -44,9 +44,7 @@ if st.button("Extract Tracks & Download MP3s"):
         st.stop()
 
     st.info("Step 2: Extracting track names using GPT...")
-
-    from openai import OpenAI
-    client = OpenAI(api_key=api_key)
+    openai.api_key = api_key
 
     comment_block = "\n".join(comments[:50])
     prompt = f"""You are an expert at identifying tracklists from DJ set YouTube comments.
@@ -57,11 +55,11 @@ Comments:
 """    
 
     try:
-        response = client.chat.completions.create(
+        response = openai.ChatCompletion.create(
             model=model,
             messages=[{"role": "user", "content": prompt}]
         )
-        result = response.choices[0].message.content.strip()
+        result = response["choices"][0]["message"]["content"].strip()
         tracks = [line.strip("-•1234567890. ").strip() for line in result.split("\n") if "-" in line]
         st.success("Tracks identified:")
         for i, t in enumerate(tracks, 1):
