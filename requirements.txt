@@ -1,4 +1,5 @@
-streamlit>=1.35.0
+streamlit
 openai==0.28.0
-yt-dlp>=2025.4.30
-dateparser>=1.2.1
+yt-dlp
+dateparser
+youtube-comment-downloader
