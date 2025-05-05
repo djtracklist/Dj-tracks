@@ -1,77 +1,103 @@
 import streamlit as st
-import subprocess
-import sys
-import os
+import yt_dlp
 import json
-from itertools import islice
-from youtube_comment_downloader import downloader as yd
+import os
+
+from youtube_comment_downloader import YoutubeCommentDownloader, SORT_BY_POPULAR
+
 import openai
 
-st.title("DJ Tracks Extractor")
+st.set_page_config(page_title="DJ Set Track Extractor", layout="wide")
+st.title("🎧 DJ Set Tracklist & MP3 Downloader")
 
-url = st.text_input("Enter YouTube URL")
-model = st.selectbox("Choose OpenAI model", ["gpt-4", "gpt-3.5-turbo"])
-api_key = st.text_input("Enter your OpenAI API Key", type="password")
+video_url = st.text_input("Enter YouTube DJ Set URL:")
+model = st.selectbox("Choose OpenAI model:", ["gpt-3.5-turbo", "gpt-4"])
+api_key = st.text_input("Enter your OpenAI API Key:", type="password")
 
 if st.button("Extract Tracks & Download MP3s"):
-    st.info("Step 1: Downloading YouTube comments...")
-    try:
-        # Download comments generator and limit to first 100
-        comments_gen = yd.YoutubeCommentDownloader.get_comments_from_url(url)
-        comments = list(islice(comments_gen, 100))
-    except Exception as e:
-        st.error(f"Failed to get comments: {e}")
+    if not video_url or not api_key:
+        st.error("Please provide both a YouTube URL and your OpenAI API key.")
         st.stop()
 
-    if not comments:
-        st.warning("No comments found. Maybe try a different video.")
+    st.info("Step 1: Downloading YouTube comments...")
+    downloader = YoutubeCommentDownloader()
+    try:
+        comments = list(
+            downloader.get_comments_from_url(
+                video_url,
+                sort_by=SORT_BY_POPULAR
+            )
+        )
+    except Exception as e:
+        st.error(f"Failed to fetch comments: {e}")
         st.stop()
 
     st.success(f"{len(comments)} comments downloaded.")
 
-    st.info("Step 2: Extracting track names using GPT...")
-    # Prepare OpenAI API
+    comments_text = "\n".join(c["text"] for c in comments[:50])
+
+    st.info("Step 2: Extracting track names using GPT…")
+    prompt = f"""
+Extract any track names and artists mentioned, and return them as a JSON list of objects with "artist" and "track" fields. Be flexible with format, and include entries like:
+
+[
+  {{ "artist": "Artist Name", "track": "Track Title" }},
+  ...
+]
+
+Now parse this comment block below and output _only_ valid JSON:
+"""
+{comments_text}
+"""
     openai.api_key = api_key
-
-    # Build prompt from comments text
-    comments_text = "\n".join([c.get("text", "") for c in comments])
-    prompt = (
-        "Extract any track names and artists mentioned, and return them as a JSON "
-        "list of objects with keys 'artist' and 'track'. Only return valid JSON, for example: "
-        "[{"artist": "Artist Name", "track": "Track Name"}, ...]"
-    )
-
     try:
         response = openai.ChatCompletion.create(
             model=model,
-            messages=[{"role": "user", "content": comments_text + "\n" + prompt}],
-            temperature=0,
+            messages=[{{"role": "user", "content": prompt.strip()}}]
         )
-        raw = response.choices[0].message.content
-        tracks = json.loads(raw)
+        raw_output = response.choices[0].message.content.strip()
     except Exception as e:
-        st.error(f"OpenAI API error: {e}")
+        st.error(f"OpenAI request failed: {e}")
         st.stop()
 
-    if not tracks:
-        st.warning("No tracks identified.")
+    st.code(raw_output, language="json")
+
+    try:
+        tracks = json.loads(raw_output)
+    except Exception:
+        st.error("Failed to parse the JSON response from GPT.")
         st.stop()
 
-    st.success("Tracks identified:")
+    if not isinstance(tracks, list) or not tracks:
+        st.warning("No tracks found in comments.")
+        st.stop()
 
-    # Display tracks with checkboxes
+    st.subheader("✅ Select Tracks to Download")
     selected_tracks = []
-    for i, t in enumerate(tracks):
-        artist = t.get("artist", "Unknown Artist")
-        track = t.get("track", "Unknown Track")
-        label = f"{artist} - {track}"
-        if st.checkbox(label, key=f"track_{i}"):
-            selected_tracks.append(t)
+    for idx, item in enumerate(tracks):
+        artist = item.get("artist", "").strip()
+        title = item.get("track", "").strip()
+        label = f"{artist} – {title}" if artist and title else title or artist
+        if st.checkbox(label, key=idx):
+            selected_tracks.append(label)
 
-    # Optional: Download selected tracks as MP3s
     if selected_tracks:
-        st.info("Step 3: Downloading selected tracks as MP3...")
-        # Placeholder for download logic
-        for t in selected_tracks:
-            st.write(f"Downloading: {t.get('artist')} - {t.get('track')}")
-        st.success("Selected tracks download completed.")
+        if st.button("Download Selected as MP3"):
+            st.info("Downloading… this may take a moment.")
+            ydl_opts = {
+                "format": "bestaudio/best",
+                "outtmpl": os.path.join("downloads", "%(title)s.%(ext)s"),
+                "quiet": True,
+                "postprocessors": [{
+                    "key": "FFmpegExtractAudio",
+                    "preferredcodec": "mp3",
+                    "preferredquality": "192",
+                }],
+            }
+            os.makedirs("downloads", exist_ok=True)
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                for q in selected_tracks:
+                    ydl.download([f"ytsearch1:{q}"])
+            st.success("All selected tracks downloaded to the `downloads/` folder.")
+    else:
+        st.info("Select at least one track above to enable download.")
