@@ -154,21 +154,22 @@ Comments:
         if label:
             line += f" [{label}]"
         st.write(line)
- # ── STEP 3: Selection UI & MP3 download ──
+ # ── STEP 3: Selection UI with individual checkboxes ──
     st.write("---")
     st.write("### Select tracks to download")
-    
+
     # Build labels from all_entries (tracks + corrections)
     labels = [
         f"{e.get('artist','Unknown Artist')} - {e.get('track','Unknown Track')}"
         for e in all_entries
     ]
-    
-    selected = st.multiselect(
-        "Choose tracks:",
-        options=labels,
-        default=labels,
-    )
+
+    # Render one checkbox per track, vertically
+    selected = []
+    for idx, label in enumerate(labels):
+        # Use a unique key so Streamlit doesn’t warn
+        if st.checkbox(label, value=True, key=f"trk_{idx}"):
+            selected.append(label)
 
     if enable_dl:
         if not selected:
