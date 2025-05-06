@@ -31,8 +31,8 @@ limit = st.sidebar.number_input(
     "Max comments to fetch:", min_value=10, max_value=500, value=100, key="lim"
 )
 sort_option = st.sidebar.selectbox(
-    "Sort comments by:", ["recent", "popular"], key="srt"
-)
+    "Sort comments by:", ["recent", "popular"], index=1, key="srt"
+)  # default to "popular"
 
 # ─── MAIN INPUT ───────────────────────────────────────────────────────
 st.title("🎧 DJ Set Tracklist & MP3 Downloader")
@@ -194,7 +194,6 @@ if "dj_tracks" in st.session_state:
         st.info("📥 Downloading selected tracks…")
         os.makedirs("downloads", exist_ok=True)
 
-        # optional cookies.txt for age‑restricted videos
         cookies_file = None
         up = st.file_uploader("Upload cookies.txt (optional)", type="txt", key="upload")
         if up:
