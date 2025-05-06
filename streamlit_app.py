@@ -229,6 +229,7 @@ if "dj_tracks" in st.session_state:
                 }],
                 # ← tell yt_dlp exactly which ffmpeg binary to use:
                 "ffmpeg_location": FF_BIN,
+                "ffprobe_location": FP_BIN,
                 "quiet": True,
             }
             try:
