@@ -17,7 +17,8 @@ st.title("🎧 DJ Set Tracklist Extractor & MP3 Downloader")
 
 # ── SIDEBAR ───────────────────────────────────────────────────────────────────────
 model_choice = st.sidebar.selectbox("Choose OpenAI model:", ["gpt-4", "gpt-3.5-turbo"])
-api_key      = st.sidebar.text_input("OpenAI API Key:", type="password")
+# load your key from .streamlit/secrets.toml instead of text input
+api_key      = st.secrets["OPENAI_API_KEY"]
 limit        = st.sidebar.number_input("Max comments to fetch:", 10, 500, 100)
 sort_option  = st.sidebar.selectbox("Sort comments by:", ["recent", "popular"])
 
@@ -26,7 +27,7 @@ video_url = st.text_input("YouTube DJ Set URL", placeholder="https://www.youtube
 if st.button("Extract Tracks", key="extract_btn"):
     # Validate
     if not api_key:
-        st.error("Please enter your OpenAI API key."); st.stop()
+        st.error("OpenAI API key is missing from secrets!"); st.stop()
     if not video_url.strip():
         st.error("Please enter a YouTube URL."); st.stop()
 
