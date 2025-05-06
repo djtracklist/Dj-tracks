@@ -2,46 +2,6 @@ import os
 import requests
 import tarfile
 import stat
-
-# … your other imports …
-
-# ── BUNDLE IN FFmpeg AT RUNTIME ─────────────────────────────────────────────────
-FF_DIR = "ffmpeg-static"
-FF_BIN = os.path.join(FF_DIR, "ffmpeg")
-FP_BIN = os.path.join(FF_DIR, "ffprobe")
-
-def ensure_ffmpeg():
-    if os.path.isfile(FF_BIN) and os.path.isfile(FP_BIN):
-        return  # already in place
-
-    os.makedirs(FF_DIR, exist_ok=True)
-    # Download the Linux x86_64 static build (John Van Sickle’s build):
-    url = "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
-    local_tar = os.path.join(FF_DIR, "ffmpeg.tar.xz")
-
-    # Stream‑download the archive
-    with requests.get(url, stream=True) as r:
-        r.raise_for_status()
-        with open(local_tar, "wb") as f:
-            for chunk in r.iter_content(chunk_size=8192):
-                f.write(chunk)
-
-    # Extract only the two binaries
-    with tarfile.open(local_tar, mode="r:xz") as tar:
-        for member in tar.getmembers():
-            name = os.path.basename(member.name)
-            if name in ("ffmpeg", "ffprobe"):
-                member.name = name  # strip leading folders
-                tar.extract(member, FF_DIR)
-
-    os.remove(local_tar)
-    # Make sure they’re executable
-    os.chmod(FF_BIN, stat.S_IXUSR | stat.S_IRUSR)
-    os.chmod(FP_BIN, stat.S_IXUSR | stat.S_IRUSR)
-
-# Kick it off before any yt_dlp calls
-ensure_ffmpeg()
-import os
 import io
 import zipfile
 import json
@@ -55,12 +15,45 @@ from youtube_comment_downloader.downloader import (
     SORT_BY_POPULAR,
 )
 
+# ── BUNDLE IN FFmpeg AT RUNTIME ─────────────────────────────────────────────────
+FF_DIR = "ffmpeg-static"
+FF_BIN = os.path.join(FF_DIR, "ffmpeg")
+FP_BIN = os.path.join(FF_DIR, "ffprobe")
+
+def ensure_ffmpeg():
+    if os.path.isfile(FF_BIN) and os.path.isfile(FP_BIN):
+        return  # already in place
+
+    os.makedirs(FF_DIR, exist_ok=True)
+    url = "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
+    local_tar = os.path.join(FF_DIR, "ffmpeg.tar.xz")
+
+    with requests.get(url, stream=True) as r:
+        r.raise_for_status()
+        with open(local_tar, "wb") as f:
+            for chunk in r.iter_content(chunk_size=8192):
+                f.write(chunk)
+
+    with tarfile.open(local_tar, mode="r:xz") as tar:
+        for member in tar.getmembers():
+            name = os.path.basename(member.name)
+            if name in ("ffmpeg", "ffprobe"):
+                member.name = name  # strip leading folders
+                tar.extract(member, FF_DIR)
+
+    os.remove(local_tar)
+    os.chmod(FF_BIN, stat.S_IXUSR | stat.S_IRUSR)
+    os.chmod(FP_BIN, stat.S_IXUSR | stat.S_IRUSR)
+
+# ensure ffmpeg is available before any yt_dlp calls
+ensure_ffmpeg()
+
+
 st.set_page_config(page_title="DJ Set Tracklist & MP3 Downloader", layout="centered")
 st.title("🎧 DJ Set Tracklist Extractor & MP3 Downloader")
 
 # ── SIDEBAR ───────────────────────────────────────────────────────────────────────
 model_choice = st.sidebar.selectbox("Choose OpenAI model:", ["gpt-4", "gpt-3.5-turbo"])
-# load your key from .streamlit/secrets.toml instead of text input
 api_key      = st.secrets["OPENAI_API_KEY"]
 limit        = st.sidebar.number_input("Max comments to fetch:", 10, 500, 100)
 sort_option  = st.sidebar.selectbox("Sort comments by:", ["recent", "popular"])
@@ -68,7 +61,6 @@ sort_option  = st.sidebar.selectbox("Sort comments by:", ["recent", "popular"])
 # ── MAIN INPUT & EXTRACTION ───────────────────────────────────────────────────────
 video_url = st.text_input("YouTube DJ Set URL", placeholder="https://www.youtube.com/watch?v=...")
 if st.button("Extract Tracks", key="extract_btn"):
-    # Validate
     if not api_key:
         st.error("OpenAI API key is missing from secrets!"); st.stop()
     if not video_url.strip():
@@ -179,7 +171,6 @@ if "dj_tracks" in st.session_state:
     st.write("---")
     st.write("### Preview YouTube results (select to download)")
 
-    # 2) Cache the YouTube search metadata so checkboxes don't re-trigger fetch
     @st.cache_data(show_spinner=False)
     def fetch_video_candidates(entries):
         ydl = yt_dlp.YoutubeDL({"quiet": True, "skip_download": True})
@@ -195,7 +186,6 @@ if "dj_tracks" in st.session_state:
 
     video_results = fetch_video_candidates(all_entries)
 
-    # 3) Render each thumbnail + title + checkbox
     to_download = []
     for idx, video in enumerate(video_results):
         entry = all_entries[idx]
@@ -205,25 +195,21 @@ if "dj_tracks" in st.session_state:
             continue
 
         cols = st.columns([1, 4, 1])
-        # thumbnail
         thumb = video.get("thumbnail")
         if thumb:
             cols[0].image(thumb, width=100)
         else:
             cols[0].write("❓")
 
-        # title + link + query
         title = video.get("title", "Unknown title")
         url   = video.get("webpage_url", "#")
         cols[1].markdown(f"**[{title}]({url})**")
         cols[1].caption(f"Search: `{entry['artist']} - {entry['track']}`")
 
-        # checkbox
         if cols[2].checkbox("", key=f"vid_{idx}"):
             to_download.append(video)
 
     st.write("---")
-    # 4) Download button
     if to_download and st.button("Download Selected MP3s", key="dl_btn"):
         st.info("📥 Downloading selected tracks…")
         os.makedirs("downloads", exist_ok=True)
@@ -255,8 +241,7 @@ if "dj_tracks" in st.session_state:
             except Exception as e:
                 st.error(f"❌ Failed to download {title}: {e}")
 
-                st.write("### Save MP3s to your device")
-
+        st.write("### Save MP3s to your device")
         for i, mp3_path in enumerate(saved):
             if os.path.exists(mp3_path):
                 with open(mp3_path, "rb") as f:
@@ -269,6 +254,5 @@ if "dj_tracks" in st.session_state:
                     )
             else:
                 st.warning(f"File missing: {mp3_path}")
-
     elif not to_download:
         st.info("Select at least one video above to enable downloading.")
