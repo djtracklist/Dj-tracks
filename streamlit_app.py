@@ -1,4 +1,47 @@
 import os
+import requests
+import tarfile
+import stat
+
+# … your other imports …
+
+# ── BUNDLE IN FFmpeg AT RUNTIME ─────────────────────────────────────────────────
+FF_DIR = "ffmpeg-static"
+FF_BIN = os.path.join(FF_DIR, "ffmpeg")
+FP_BIN = os.path.join(FF_DIR, "ffprobe")
+
+def ensure_ffmpeg():
+    if os.path.isfile(FF_BIN) and os.path.isfile(FP_BIN):
+        return  # already in place
+
+    os.makedirs(FF_DIR, exist_ok=True)
+    # Download the Linux x86_64 static build (John Van Sickle’s build):
+    url = "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
+    local_tar = os.path.join(FF_DIR, "ffmpeg.tar.xz")
+
+    # Stream‑download the archive
+    with requests.get(url, stream=True) as r:
+        r.raise_for_status()
+        with open(local_tar, "wb") as f:
+            for chunk in r.iter_content(chunk_size=8192):
+                f.write(chunk)
+
+    # Extract only the two binaries
+    with tarfile.open(local_tar, mode="r:xz") as tar:
+        for member in tar.getmembers():
+            name = os.path.basename(member.name)
+            if name in ("ffmpeg", "ffprobe"):
+                member.name = name  # strip leading folders
+                tar.extract(member, FF_DIR)
+
+    os.remove(local_tar)
+    # Make sure they’re executable
+    os.chmod(FF_BIN, stat.S_IXUSR | stat.S_IRUSR)
+    os.chmod(FP_BIN, stat.S_IXUSR | stat.S_IRUSR)
+
+# Kick it off before any yt_dlp calls
+ensure_ffmpeg()
+import os
 import io
 import zipfile
 import json
@@ -198,6 +241,8 @@ if "dj_tracks" in st.session_state:
                     "preferredcodec": "mp3",
                     "preferredquality": "192",
                 }],
+                # point yt_dlp at our bundled ffmpeg binary
+                "ffmpeg_location": os.path.join("ffmpeg-static", "ffmpeg"),
                 "quiet": True,
             }
             try:
