@@ -4,6 +4,7 @@ import os
 import io
 import zipfile
 import json
+import re
 
 import streamlit as st
 import yt_dlp
@@ -21,7 +22,7 @@ OPENAI_KEY = st.secrets.get("OPENAI_API_KEY")
 if not OPENAI_KEY:
     st.error("❌ Missing OpenAI API key in .streamlit/secrets.toml")
     st.stop()
-openai.api_key = OPENAI_KEY  # set your key for the new SDK
+openai.api_key = OPENAI_KEY
 
 # ─── SIDEBAR ──────────────────────────────────────────────────────────
 model_choice = st.sidebar.selectbox(
@@ -133,120 +134,8 @@ Comments:
         except Exception:
             continue
 
+    # fallback to regex if GPT fails
     if not used_model:
-        st.error("❌ GPT failed to extract any tracks or corrections.")
-        st.stop()
+        st.warning("❌ GPT failed to extract any tracks or corrections — falling back to regex parsing.")
 
-    st.success(f"✅ Extracted {len(tracks)} tracks + {len(corrections)} corrections via {used_model}")
-    st.session_state["dj_tracks"] = tracks + corrections
-
-# ─── PREVIEW & DOWNLOAD ─────────────────────────────────────────────────────
-if "dj_tracks" in st.session_state:
-    entries = st.session_state["dj_tracks"]
-
-    st.write("### Tracks identified:")
-    for i, e in enumerate(entries, start=1):
-        st.write(f"{i}. {e['artist']} – {e['track']}")
-
-    st.write("---")
-    st.write("### Preview & select YouTube videos")
-
-    @st.cache_data(show_spinner=False)
-    def fetch_videos(es):
-        ydl = yt_dlp.YoutubeDL({"quiet": True, "skip_download": True})
-        vids = []
-        for ent in es:
-            q = f"{ent['artist']} - {ent['track']}"
-            try:
-                info = ydl.extract_info(f"ytsearch1:{q}", download=False)
-                vids.append(info["entries"][0])
-            except Exception:
-                vids.append(None)
-        return vids
-
-    video_results = fetch_videos(entries)
-    to_download = []
-
-    for idx, video in enumerate(video_results):
-        ent = entries[idx]
-        label = f"{ent['artist']} – {ent['track']}"
-        if video is None:
-            st.error(f"No YouTube match for **{label}**", key=f"err_{idx}")
-            continue
-
-        c1, c2, c3 = st.columns([1, 4, 1])
-        thumb = video.get("thumbnail")
-        if thumb:
-            c1.image(thumb, width=100, key=f"img_{idx}")
-        else:
-            c1.write("❓", key=f"imgx_{idx}")
-
-        title = video.get("title", "Unknown title")
-        url   = video.get("webpage_url", "#")
-        c2.markdown(f"**[{title}]({url})**", key=f"md_{idx}")
-        c2.caption(f"Search: `{label}`", key=f"cap_{idx}")
-
-        if c3.checkbox("Select", key=f"chk_{idx}", label_visibility="collapsed"):
-            to_download.append(video)
-
-    st.write("---")
-    if to_download and st.button("Download Selected MP3s", key="btn_dl"):
-        st.info("📥 Downloading selected tracks…")
-        os.makedirs("downloads", exist_ok=True)
-
-        cookies_file = None
-        up = st.file_uploader("Upload cookies.txt (optional)", type="txt", key="upload")
-        if up:
-            cookies_file = os.path.join("downloads", "cookies.txt")
-            with open(cookies_file, "wb") as f:
-                f.write(up.getbuffer())
-
-        saved = []
-        for vid in to_download:
-            t = vid["title"]
-            u = vid["webpage_url"]
-            st.write(f"▶️ {t}", key=f"log_{t}")
-            ydl_opts = {
-                "format": "bestaudio/best",
-                "outtmpl": os.path.join("downloads", "%(title)s.%(ext)s"),
-                "postprocessors": [{
-                    "key": "FFmpegExtractAudio",
-                    "preferredcodec": "mp3",
-                    "preferredquality": "192",
-                }],
-                "quiet": True,
-            }
-            if cookies_file:
-                ydl_opts["cookiefile"] = cookies_file
-
-            try:
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    info = ydl.extract_info(u, download=True)
-            except yt_dlp.utils.DownloadError as de:
-                msg = str(de)
-                if "Sign in to confirm your age" in msg:
-                    st.error("⚠️ Age‑restricted video; please provide cookies.txt", key=f"age_{t}")
-                else:
-                    st.error(f"❌ Failed to download {t}: {de}", key=f"dlerr_{t}")
-                continue
-
-            fn = ydl.prepare_filename(info)
-            mp3 = os.path.splitext(fn)[0] + ".mp3"
-            saved.append(mp3)
-            st.success(f"✅ {os.path.basename(mp3)}", key=f"succ_{t}")
-
-        st.write("### Save MP3s")
-        for i, path in enumerate(saved):
-            if os.path.exists(path):
-                with open(path, "rb") as f:
-                    st.download_button(
-                        label=f"Save {os.path.basename(path)}",
-                        data=f,
-                        file_name=os.path.basename(path),
-                        mime="audio/mpeg",
-                        key=f"save_{i}"
-                    )
-            else:
-                st.warning(f"Missing file: {path}", key=f"warn_{i}")
-    elif not to_download:
-        st.info("Select at least one video above to enable downloading.", key="info_no_vid")
+        pattern = re.compile(r'(\d{1,2}:\d{2})\s*([^-\n]+?)\s*-\s*([^
