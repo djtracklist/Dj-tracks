@@ -241,8 +241,8 @@ if "dj_tracks" in st.session_state:
                     "preferredcodec": "mp3",
                     "preferredquality": "192",
                 }],
-                # point yt_dlp at our bundled ffmpeg binary
-                "ffmpeg_location": os.path.join("ffmpeg-static", "ffmpeg"),
+                # ← tell yt_dlp exactly which ffmpeg binary to use:
+                "ffmpeg_location": FF_BIN,
                 "quiet": True,
             }
             try:
