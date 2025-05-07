@@ -38,7 +38,7 @@ def ensure_ffmpeg():
         for member in tar.getmembers():
             name = os.path.basename(member.name)
             if name in ("ffmpeg", "ffprobe"):
-                member.name = name
+                member.name = name  # strip leading folders
                 tar.extract(member, FF_DIR)
 
     os.remove(local_tar)
@@ -52,7 +52,7 @@ st.set_page_config(page_title="DJ Set Tracklist & MP3 Downloader", layout="cente
 st.title("🎧 DJ Set Tracklist Extractor & MP3 Downloader")
 
 # ── FIXED SETTINGS ──────────────────────────────────────────────────────────────
-model_choice = "gpt-4"
+model_choice = "gpt-4"           # ← default to GPT-4, fallback to 3.5 below
 limit        = 100
 sort_flag    = SORT_BY_POPULAR
 
