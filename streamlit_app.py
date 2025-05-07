@@ -51,17 +51,16 @@ ensure_ffmpeg()
 st.set_page_config(page_title="DJ Set Tracklist & MP3 Downloader", layout="centered")
 st.title("🎧 DJ Set Tracklist Extractor & MP3 Downloader")
 
-# ── FIXED SETTINGS ──────────────────────────────────────────────────────────────
-model_choice = "gpt-4"           # ← default to GPT-4, fallback to 3.5 below
-limit        = 100
-sort_flag    = SORT_BY_POPULAR
-
-# ← load your key from .streamlit/secrets.toml
-api_key = st.secrets.get("OPENAI_API_KEY", "")
+# ── SIDEBAR ───────────────────────────────────────────────────────────────────────
+model_choice = st.sidebar.selectbox("Choose OpenAI model:", ["gpt-4", "gpt-3.5-turbo"])
+api_key      = st.secrets.get("OPENAI_API_KEY", "")
+limit        = st.sidebar.number_input("Max comments to fetch:", 10, 500, 100)
+sort_option  = st.sidebar.selectbox("Sort comments by:", ["recent", "popular"])
 
 # ── MAIN INPUT & EXTRACTION ───────────────────────────────────────────────────────
 video_url = st.text_input("YouTube DJ Set URL", placeholder="https://www.youtube.com/watch?v=...")
 if st.button("Extract Tracks", key="extract_btn"):
+    # Validate
     if not api_key:
         st.error("OpenAI API key is missing from your secrets!"); st.stop()
     if not video_url.strip():
@@ -71,6 +70,7 @@ if st.button("Extract Tracks", key="extract_btn"):
     st.info("Step 1: Downloading comments…")
     try:
         downloader = YoutubeCommentDownloader()
+        sort_flag = SORT_BY_RECENT if sort_option == "recent" else SORT_BY_POPULAR
         raw_comments = downloader.get_comments_from_url(video_url, sort_by=sort_flag)
         comments = [c.get("text","") for c in raw_comments][:limit]
         if not comments:
@@ -174,15 +174,33 @@ if "dj_tracks" in st.session_state:
 
     @st.cache_data(show_spinner=False)
     def fetch_video_candidates(entries):
-        ydl = yt_dlp.YoutubeDL({"quiet": True, "skip_download": True})
+        """
+        Do a flat search for each track, then build a minimal video dict with only
+        id, title, webpage_url and a thumbnail URL—no deep metadata fetches.
+        """
+        ydl_opts = {
+            "quiet": True,
+            "skip_download": True,
+            "extract_flat": True,   # <-- don't fetch full video metadata
+        }
         vids = []
-        for e in entries:
-            query = f"{e['artist']} - {e['track']}"
-            try:
-                info = ydl.extract_info(f"ytsearch1:{query}", download=False)
-                vids.append(info["entries"][0])
-            except Exception:
-                vids.append(None)
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            for e in entries:
+                query = f"{e['artist']} - {e['track']}"
+                try:
+                    info = ydl.extract_info(f"ytsearch1:{query}", download=False)
+                    video = info["entries"][0]
+                    vid_id    = video.get("id") or video.get("url")
+                    title     = video.get("title")
+                    thumbnail = f"https://img.youtube.com/vi/{vid_id}/hqdefault.jpg"
+                    vids.append({
+                        "id":           vid_id,
+                        "title":        title,
+                        "webpage_url":  f"https://www.youtube.com/watch?v={vid_id}",
+                        "thumbnail":    thumbnail,
+                    })
+                except Exception:
+                    vids.append(None)
         return vids
 
     video_results = fetch_video_candidates(all_entries)
@@ -197,17 +215,9 @@ if "dj_tracks" in st.session_state:
             continue
 
         cols = st.columns([1, 4, 1])
-        thumb = video.get("thumbnail")
-        if thumb:
-            cols[0].image(thumb, width=100)
-        else:
-            cols[0].write("❓")
-
-        title = video.get("title", "Unknown title")
-        url   = video.get("webpage_url", "#")
-        cols[1].markdown(f"**[{title}]({url})**")
+        cols[0].image(video["thumbnail"], width=100)
+        cols[1].markdown(f"**[{video['title']}]({video['webpage_url']})**")
         cols[1].caption(f"Search: `{entry['artist']} - {entry['track']}`")
-
         if cols[2].checkbox("", key=f"vid_{idx}"):
             to_download.append(video)
 
@@ -219,8 +229,8 @@ if "dj_tracks" in st.session_state:
         saved = []
 
         for video in to_download:
-            title = video.get("title")
-            url   = video.get("webpage_url")
+            title = video["title"]
+            url   = video["webpage_url"]
             st.write(f"▶️ {title}")
             ydl_opts = {
                 "format": "bestaudio/best",
@@ -244,6 +254,7 @@ if "dj_tracks" in st.session_state:
             except Exception as e:
                 st.error(f"❌ Failed to download {title}: {e}")
 
+        # Bundle into ZIP
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w") as zf:
             for p in saved:
