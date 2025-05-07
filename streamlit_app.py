@@ -5,6 +5,7 @@ import stat
 import io
 import zipfile
 import json
+import re
 
 import streamlit as st
 import yt_dlp
@@ -121,6 +122,11 @@ Comments:
     st.text_area("❯ Prompt sent to GPT:", snippet, height=200)
 
     def extract_json(raw: str) -> str:
+        # try to pull the first { … } block
+        m = re.search(r'\{[\s\S]*\}', raw)
+        if m:
+            return m.group(0)
+        # fallback to fences
         if raw.startswith("```"):
             parts = raw.split("```")
             if len(parts) >= 3:
@@ -137,20 +143,24 @@ Comments:
             ],
             temperature=0,
         )
-        return resp.choices[0].message.content
+        raw = resp.choices[0].message.content
+        st.text_area(f"↪ Raw GPT output ({model_name}):", raw, height=200)
+        return raw
 
     tracks, corrections, used_model = [], [], None
-    for m in [model_choice, "gpt-3.5-turbo"]:
+    for m in ["gpt-3.5-turbo", model_choice]:
         try:
-            raw    = ask(m)
-            clean  = extract_json(raw)
+            raw   = ask(m)
+            clean = extract_json(raw)
+            st.text_area(f"↪ Extracted JSON ({m}):", clean, height=200)
             parsed = json.loads(clean)
             if isinstance(parsed, dict) and "tracks" in parsed and "corrections" in parsed:
                 tracks      = parsed["tracks"]
                 corrections = parsed["corrections"]
                 used_model  = m
                 break
-        except Exception:
+        except Exception as e:
+            st.write(f"⚠️ Parsing with {m} failed: {e}")
             continue
 
     if used_model is None:
