@@ -1,20 +1,20 @@
 import os
 import io
-import json
 import zipfile
+import json
 import requests
 import tarfile
 import stat
-
 import streamlit as st
 import yt_dlp
 from openai import OpenAI
 from youtube_comment_downloader.downloader import (
     YoutubeCommentDownloader,
+    SORT_BY_RECENT,
     SORT_BY_POPULAR,
 )
 
-# ── BUNDLE FFMPEG ───────────────────────────────────────────────────────
+# ── Bundle FFmpeg ────────────────────────────────────────────────────────────────
 FF_DIR = "ffmpeg-static"
 FF_BIN = os.path.join(FF_DIR, "ffmpeg")
 FP_BIN = os.path.join(FF_DIR, "ffprobe")
@@ -24,98 +24,106 @@ def ensure_ffmpeg():
         return
     os.makedirs(FF_DIR, exist_ok=True)
     url = "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
-    local_tar = os.path.join(FF_DIR, "ffmpeg.tar.xz")
+    archive = os.path.join(FF_DIR, "ffmpeg.tar.xz")
+
     with requests.get(url, stream=True) as r:
         r.raise_for_status()
-        with open(local_tar, "wb") as f:
+        with open(archive, "wb") as f:
             for chunk in r.iter_content(chunk_size=8192):
                 f.write(chunk)
-    with tarfile.open(local_tar, mode="r:xz") as tar:
+
+    with tarfile.open(archive, mode="r:xz") as tar:
         for member in tar.getmembers():
             name = os.path.basename(member.name)
             if name in ("ffmpeg", "ffprobe"):
                 member.name = name
                 tar.extract(member, FF_DIR)
-    os.remove(local_tar)
-    os.chmod(FF_BIN, stat.S_IXUSR | stat.S_IRUSR)
-    os.chmod(FP_BIN, stat.S_IXUSR | stat.S_IRUSR)
+
+    os.remove(archive)
+    os.chmod(FF_BIN, stat.S_IXUSR | stat.S_IRUSR | stat.S_IXGRP)
+    os.chmod(FP_BIN, stat.S_IXUSR | stat.S_IRUSR | stat.S_IXGRP)
 
 ensure_ffmpeg()
 
-# ── STREAMLIT UI ─────────────────────────────────────────────────────────
+# ── Streamlit UI Setup ───────────────────────────────────────────────────────────
 st.set_page_config(page_title="DJ Set Tracklist & MP3 Downloader", layout="centered")
 st.title("🎧 DJ Set Tracklist Extractor & MP3 Downloader")
 
-model_choice = st.sidebar.selectbox("OpenAI model", ["gpt-4", "gpt-3.5-turbo"])
+model_choice = st.sidebar.selectbox("Choose OpenAI model:", ["gpt-4", "gpt-3.5-turbo"])
 api_key = st.secrets["OPENAI_API_KEY"]
-limit = st.sidebar.number_input("Max comments to fetch", 10, 500, 100)
+limit = st.sidebar.number_input("Max comments to fetch:", 10, 500, 100)
+sort_option = st.sidebar.selectbox("Sort comments by:", ["recent", "popular"])
 
 video_url = st.text_input("YouTube DJ Set URL", placeholder="https://www.youtube.com/watch?v=...")
-if st.button("Extract Tracks", key="extract_btn"):
 
-    # ── STEP 1: Download Comments ───────────────────────────────────────
-    st.info("Step 1: Downloading comments (popular first)…")
+if st.button("Extract Tracks", key="extract_btn"):
+    if not api_key:
+        st.error("OpenAI API key is missing from secrets.toml!"); st.stop()
+    if not video_url.strip():
+        st.error("Please enter a YouTube URL."); st.stop()
+
+    st.info("Step 1: Downloading comments…")
     try:
         downloader = YoutubeCommentDownloader()
-        comments = [
-            c.get("text", "")
-            for c in downloader.get_comments_from_url(video_url, sort_by=SORT_BY_POPULAR)
-        ][:limit]
+        sort_flag = SORT_BY_RECENT if sort_option == "recent" else SORT_BY_POPULAR
+        raw_comments = downloader.get_comments_from_url(video_url, sort_by=sort_flag)
+        comments = [c.get("text", "") for c in raw_comments][:limit]
         if not comments:
-            raise RuntimeError("No comments retrieved.")
+            raise RuntimeError("No comments found.")
         st.success(f"✅ {len(comments)} comments downloaded.")
     except Exception as e:
-        st.error(f"Failed to download comments: {e}")
-        st.stop()
+        st.error(f"Failed to download comments: {e}"); st.stop()
 
-    # ── STEP 2: Extract Tracks via GPT ───────────────────────────────────
-    st.info("Step 2: Extracting tracks with GPT…")
+    st.info("Step 2: Extracting tracks via GPT…")
     client = OpenAI(api_key=api_key)
 
     system_prompt = """
-You are a world-class DJ tracklist curator.
-From raw YouTube comments, extract:
-1) All timestamped track mentions in the format:
-   MM:SS Artist - Track Title (version [label] optional)
-2) Any edits or corrections like “edit:…”
-Return JSON:
-{
-  "tracks": [ { artist, track, version, label } ],
-  "corrections": [ { artist, track, version, label } ]
-}
+You are a world‑class DJ‑set tracklist curator with a complete music knowledge base.
+Given raw YouTube comment texts, do two things:
+1) Extract all timestamped track mentions in the form:
+   MM:SS Artist - Track Title (optional remix/version and [label])
+2) Extract any correction/update comments where a user writes "edit:", "correction:", "update:", "oops:", etc., clarifying a previous track.
+
+Return ONLY a JSON object with keys "tracks" and "corrections", each a list of objects with fields:
+  artist  (string)
+  track   (string)
+  version (string or empty)
+  label   (string or empty)
+No extra keys or commentary.
 """
 
     few_shot = """
+### Example Input:
 Comments:
 03:45 John Noseda - Climax
 05:10 Roy - Shooting Star [1987]
 07:20 Cormac - Sparks
 10:00 edit: John Noseda - Climax (VIP Mix)
 
-JSON:
+### Example JSON Output:
 {
   "tracks": [
-    {"artist": "John Noseda", "track": "Climax", "version": "", "label": ""},
-    {"artist": "Roy", "track": "Shooting Star", "version": "", "label": "1987"},
-    {"artist": "Cormac", "track": "Sparks", "version": "", "label": ""}
+    {"artist":"John Noseda","track":"Climax","version":"","label":""},
+    {"artist":"Roy","track":"Shooting Star","version":"","label":"1987"},
+    {"artist":"Cormac","track":"Sparks","version":"","label":""}
   ],
   "corrections": [
-    {"artist": "John Noseda", "track": "Climax", "version": "VIP Mix", "label": ""}
+    {"artist":"John Noseda","track":"Climax","version":"VIP Mix","label":""}
   ]
 }
 """
 
-    snippet = "\n".join(comments)
-    st.text_area("Prompt sent to GPT:", snippet, height=200)
+    snippet = "\n".join(comments[:100])
+    st.text_area("❯ Prompt sent to GPT:", snippet, height=200)
 
-    def extract_json(raw: str):
+    def extract_json(raw: str) -> str:
         if raw.startswith("```"):
             parts = raw.split("```")
             if len(parts) >= 3:
                 return parts[1].strip()
         return raw.strip()
 
-    def ask_gpt(model_name):
+    def ask(model_name: str) -> str:
         resp = client.chat.completions.create(
             model=model_name,
             messages=[
@@ -128,77 +136,84 @@ JSON:
         return resp.choices[0].message.content
 
     tracks, corrections, used_model = [], [], None
-    for model in [model_choice, "gpt-3.5-turbo"]:
+    for m in [model_choice, "gpt-3.5-turbo"]:
         try:
-            raw = ask_gpt(model)
-            parsed = json.loads(extract_json(raw))
-            if "tracks" in parsed and "corrections" in parsed:
+            raw = ask(m)
+            clean = extract_json(raw)
+            parsed = json.loads(clean)
+            if isinstance(parsed, dict) and "tracks" in parsed and "corrections" in parsed:
                 tracks = parsed["tracks"]
                 corrections = parsed["corrections"]
-                used_model = model
+                used_model = m
                 break
         except Exception:
             continue
 
     if used_model is None:
-        st.error("❌ GPT failed to extract tracks.")
-        st.stop()
+        st.error("❌ GPT failed to extract any tracks or corrections."); st.stop()
 
     all_entries = tracks + corrections
+    st.success(f"✅ {len(tracks)} tracks + {len(corrections)} corrections via {used_model}.")
     st.session_state["dj_tracks"] = all_entries
-    st.success(f"✅ Found {len(tracks)} tracks + {len(corrections)} corrections via {used_model}.")
 
-# ── STEP 3: Display Results ───────────────────────────────────────────────
+# ── Track Display & YouTube Fetch ────────────────────────────────────────────────
 if "dj_tracks" in st.session_state:
-    entries = st.session_state["dj_tracks"]
+    all_entries = st.session_state["dj_tracks"]
     st.write("### Tracks identified:")
-    for i, t in enumerate(entries, start=1):
-        s = f"{i}. {t['artist']} – {t['track']}"
-        if t.get("version"):
-            s += f" ({t['version']})"
-        if t.get("label"):
-            s += f" [{t['label']}]"
-        st.write(s)
+    for i, e in enumerate(all_entries, start=1):
+        st.write(f"{i}. {e['artist']} – {e['track']}")
 
-    # ── STEP 4: YouTube Previews & Download ─────────────────────────────
     st.write("---")
-    st.write("### Select matching YouTube result to download")
+    st.write("### Preview YouTube results (select to download)")
 
     @st.cache_data(show_spinner=False)
-    def fetch_youtube(entries):
+    def fetch_video_candidates(entries):
         ydl = yt_dlp.YoutubeDL({"quiet": True, "skip_download": True})
-        results = []
+        vids = []
         for e in entries:
+            query = f"{e['artist']} - {e['track']}"
             try:
-                query = f"{e['artist']} - {e['track']}"
                 info = ydl.extract_info(f"ytsearch1:{query}", download=False)
-                results.append(info["entries"][0])
+                vids.append(info["entries"][0])
             except Exception:
-                results.append(None)
-        return results
+                vids.append(None)
+        return vids
 
-    yt_results = fetch_youtube(entries)
-    selected = []
-    for idx, video in enumerate(yt_results):
-        track = entries[idx]
-        label = f"{track['artist']} – {track['track']}"
+    video_results = fetch_video_candidates(all_entries)
+
+    to_download = []
+    for idx, video in enumerate(video_results):
+        entry = all_entries[idx]
+        label = f"{entry['artist']} – {entry['track']}"
         if video is None:
-            st.error(f"No video found for {label}")
+            st.error(f"No YouTube match for **{label}**")
             continue
-        cols = st.columns([1, 4, 1])
-        cols[0].image(video.get("thumbnail", ""), width=100)
-        cols[1].markdown(f"**[{video.get('title')}]({video.get('webpage_url')})**")
-        cols[1].caption(f"`{label}`")
-        if cols[2].checkbox("", key=f"yt_{idx}"):
-            selected.append(video)
 
-    if selected and st.button("Download Selected MP3s"):
-        st.info("📥 Starting download…")
+        cols = st.columns([1, 4, 1])
+        thumb = video.get("thumbnail")
+        if thumb:
+            cols[0].image(thumb, width=100)
+        else:
+            cols[0].write("❓")
+
+        title = video.get("title", "Unknown title")
+        url = video.get("webpage_url", "#")
+        cols[1].markdown(f"**[{title}]({url})**")
+        cols[1].caption(f"Search: `{entry['artist']} - {entry['track']}`")
+
+        if cols[2].checkbox("", key=f"vid_{idx}"):
+            to_download.append(video)
+
+    st.write("---")
+    if to_download and st.button("Download Selected MP3s", key="dl_btn"):
+        st.info("📥 Downloading selected tracks…")
+        os.makedirs("downloads", exist_ok=True)
         saved = []
-        for video in selected:
-            title = video["title"]
-            url = video["webpage_url"]
-            st.write(f"▶️ {title}")
+
+        for video in to_download:
+            title = video.get("title")
+            url = video.get("webpage_url")
+            st.write(f"▶️ {title}")
             ydl_opts = {
                 "format": "bestaudio/best",
                 "outtmpl": os.path.join("downloads", "%(title)s.%(ext)s"),
@@ -214,21 +229,24 @@ if "dj_tracks" in st.session_state:
             try:
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     info = ydl.extract_info(url, download=True)
-                    mp3_path = os.path.splitext(ydl.prepare_filename(info))[0] + ".mp3"
-                    saved.append(mp3_path)
-                    st.success(f"✅ {os.path.basename(mp3_path)}")
+                    orig = ydl.prepare_filename(info)
+                    mp3 = os.path.splitext(orig)[0] + ".mp3"
+                    saved.append(mp3)
+                st.success(f"✅ {os.path.basename(mp3)}")
             except Exception as e:
-                st.error(f"❌ Failed: {e}")
+                st.error(f"❌ Failed to download {title}: {e}")
 
-        for i, mp3 in enumerate(saved):
-            if os.path.exists(mp3):
-                with open(mp3, "rb") as f:
+        for i, mp3_path in enumerate(saved):
+            if os.path.exists(mp3_path):
+                with open(mp3_path, "rb") as f:
                     st.download_button(
-                        label=f"Save {os.path.basename(mp3)}",
+                        label=f"Save {os.path.basename(mp3_path)}",
                         data=f,
-                        file_name=os.path.basename(mp3),
+                        file_name=os.path.basename(mp3_path),
                         mime="audio/mpeg",
-                        key=f"save_{i}",
+                        key=f"dl_{i}",
                     )
             else:
-                st.warning(f"File missing: {mp3}")
+                st.warning(f"File missing: {mp3_path}")
+    elif not to_download:
+        st.info("Select at least one video above to enable downloading.")
