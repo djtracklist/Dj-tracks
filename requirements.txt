@@ -1,5 +1,5 @@
-streamlit
-yt-dlp
-youtube-comment-downloader
-openai==0.28.0
-ffmpeg-static
+streamlit>=1.32.0
+yt-dlp>=2024.4.9
+openai>=1.14.3
+youtube-comment-downloader>=0.1.6
+requests>=2.31.0
