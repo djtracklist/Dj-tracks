@@ -82,8 +82,8 @@ if st.button("Extract Tracks"):
     system_prompt = """
 You are a world-class DJ-set tracklist curator with a complete music knowledge base.
 Given raw YouTube comment texts, do two things:
-1) Extract all timestamped track mentions in the form:
-   MM:SS Artist - Track Title (optional remix/version and [label])
+1) Extract all track mentions in the form:
+   [optional MM:SS] Artist - Track Title (optional remix/version and [label])
 2) Extract any correction/update comments where a user writes "edit:", "correction:", "update:", "oops:", etc., clarifying a previous track.
 
 Return ONLY a JSON object with keys "tracks" and "corrections", each a list of objects with fields:
@@ -100,13 +100,15 @@ Comments:
 05:10 Roy - Shooting Star [1987]
 07:20 Cormac - Sparks
 10:00 edit: John Noseda - Climax (VIP Mix)
+Artist Zed – No Time Stamp Track
 
 ### Example JSON Output:
 {
   "tracks": [
     {"artist":"John Noseda","track":"Climax","version":"","label":""},
     {"artist":"Roy","track":"Shooting Star","version":"","label":"1987"},
-    {"artist":"Cormac","track":"Sparks","version":"","label":""}
+    {"artist":"Cormac","track":"Sparks","version":"","label":""},
+    {"artist":"Artist Zed","track":"No Time Stamp Track","version":"","label":""}
   ],
   "corrections": [
     {"artist":"John Noseda","track":"Climax","version":"VIP Mix","label":""}
@@ -145,8 +147,34 @@ Comments:
         except Exception:
             continue
 
+    # ── regex fallbacks if GPT found nothing
     if used_model is None:
-        st.error("❌ GPT failed to extract any tracks or corrections."); st.stop()
+        # 1) timestamped fallback
+        for c in comments:
+            m1 = re.search(r'(\d{1,2}:\d{2})\s*([^–\-\n]+?)\s*[–\-]\s*(.+)', c)
+            if m1:
+                tracks.append({
+                    "artist":  m1.group(2).strip(),
+                    "track":   m1.group(3).strip(),
+                    "version": "",
+                    "label":   ""
+                })
+        # 2) non-timestamped fallback
+        if not tracks:
+            pattern2 = re.compile(r'^\s*([\w &\'.,]+?)\s*[–\-]\s*(.+)$')
+            for c in comments:
+                m2 = pattern2.match(c)
+                if m2:
+                    tracks.append({
+                        "artist":  m2.group(1).strip(),
+                        "track":   m2.group(2).strip(),
+                        "version": "",
+                        "label":   ""
+                    })
+        if tracks:
+            used_model = "regex-fallback"
+        else:
+            st.error("❌ GPT failed to extract any tracks or corrections."); st.stop()
 
     all_entries = tracks + corrections
     st.success(f"✅ {len(tracks)} tracks + {len(corrections)} corrections.")
