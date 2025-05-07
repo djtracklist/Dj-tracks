@@ -63,8 +63,8 @@ if st.button("Extract Tracks"):
     if not video_url.strip():
         st.error("Please enter a YouTube URL."); st.stop()
 
-    # Step 1: Download comments
-    st.info("Step 1: Downloading comments…")
+    # Step 1: reviewing comments…
+    st.info("Step 1: reviewing comments…")
     try:
         downloader = YoutubeCommentDownloader()
         raw_comments = downloader.get_comments_from_url(video_url, sort_by=SORT_FLAG)
@@ -75,8 +75,8 @@ if st.button("Extract Tracks"):
     except Exception as e:
         st.error(f"Failed to download comments: {e}"); st.stop()
 
-    # Step 2: GPT extraction
-    st.info("Step 2: Extracting tracks via GPT…")
+    # Step 2: extracting Track IDs…
+    st.info("Step 2: extracting Track IDs…")
     client = OpenAI(api_key=api_key)
 
     system_prompt = """
@@ -114,7 +114,6 @@ Comments:
 }
 """
     snippet = "\n".join(comments[:100])
-    st.text_area("❯ Prompt sent to GPT:", snippet, height=200)
 
     def extract_json(raw: str) -> str:
         m = re.search(r'\{[\s\S]*\}', raw)
@@ -150,7 +149,7 @@ Comments:
         st.error("❌ GPT failed to extract any tracks or corrections."); st.stop()
 
     all_entries = tracks + corrections
-    st.success(f"✅ {len(tracks)} tracks + {len(corrections)} corrections via {used_model}.")
+    st.success(f"✅ {len(tracks)} tracks + {len(corrections)} corrections.")
     st.session_state["dj_tracks"] = all_entries
 
 # ── STEP 3 & 4: SHOW LIST, PREVIEW & DOWNLOAD ─────────────────────────────────
@@ -208,7 +207,7 @@ if "dj_tracks" in st.session_state:
 
     st.write("---")
     if to_download and st.button("Download Selected MP3s"):
-        st.info("📥 Downloading selected tracks…")
+        st.info("Preparing selected tracks…")
         os.makedirs("downloads", exist_ok=True)
         saved = []
 
