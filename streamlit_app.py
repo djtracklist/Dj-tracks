@@ -2,9 +2,6 @@ import os
 import io
 import zipfile
 import json
-import requests
-import tarfile
-import stat
 import streamlit as st
 import yt_dlp
 from openai import OpenAI
@@ -14,54 +11,30 @@ from youtube_comment_downloader.downloader import (
     SORT_BY_POPULAR,
 )
 
-# ── Bundle FFmpeg ────────────────────────────────────────────────────────────────
-FF_DIR = "ffmpeg-static"
-FF_BIN = os.path.join(FF_DIR, "ffmpeg")
-FP_BIN = os.path.join(FF_DIR, "ffprobe")
-
-def ensure_ffmpeg():
-    if os.path.isfile(FF_BIN) and os.path.isfile(FP_BIN):
-        return
-    os.makedirs(FF_DIR, exist_ok=True)
-    url = "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
-    archive = os.path.join(FF_DIR, "ffmpeg.tar.xz")
-
-    with requests.get(url, stream=True) as r:
-        r.raise_for_status()
-        with open(archive, "wb") as f:
-            for chunk in r.iter_content(chunk_size=8192):
-                f.write(chunk)
-
-    with tarfile.open(archive, mode="r:xz") as tar:
-        for member in tar.getmembers():
-            name = os.path.basename(member.name)
-            if name in ("ffmpeg", "ffprobe"):
-                member.name = name
-                tar.extract(member, FF_DIR)
-
-    os.remove(archive)
-    os.chmod(FF_BIN, stat.S_IXUSR | stat.S_IRUSR | stat.S_IXGRP)
-    os.chmod(FP_BIN, stat.S_IXUSR | stat.S_IRUSR | stat.S_IXGRP)
-
-ensure_ffmpeg()
-
-# ── Streamlit UI Setup ───────────────────────────────────────────────────────────
+# ── Streamlit config ───────────────────────────────────────────────
 st.set_page_config(page_title="DJ Set Tracklist & MP3 Downloader", layout="centered")
 st.title("🎧 DJ Set Tracklist Extractor & MP3 Downloader")
 
+# ── Sidebar inputs ─────────────────────────────────────────────────
 model_choice = st.sidebar.selectbox("Choose OpenAI model:", ["gpt-4", "gpt-3.5-turbo"])
-api_key = st.secrets["OPENAI_API_KEY"]
 limit = st.sidebar.number_input("Max comments to fetch:", 10, 500, 100)
 sort_option = st.sidebar.selectbox("Sort comments by:", ["recent", "popular"])
 
+# Use API key from secrets.toml
+api_key = st.secrets["OPENAI_API_KEY"]
+
+# ── Main UI ────────────────────────────────────────────────────────
 video_url = st.text_input("YouTube DJ Set URL", placeholder="https://www.youtube.com/watch?v=...")
 
 if st.button("Extract Tracks", key="extract_btn"):
     if not api_key:
-        st.error("OpenAI API key is missing from secrets.toml!"); st.stop()
+        st.error("OpenAI API key is missing from Streamlit secrets.")
+        st.stop()
     if not video_url.strip():
-        st.error("Please enter a YouTube URL."); st.stop()
+        st.error("Please enter a YouTube URL.")
+        st.stop()
 
+    # ── Step 1: Download comments ────────────────────────────────
     st.info("Step 1: Downloading comments…")
     try:
         downloader = YoutubeCommentDownloader()
@@ -72,8 +45,10 @@ if st.button("Extract Tracks", key="extract_btn"):
             raise RuntimeError("No comments found.")
         st.success(f"✅ {len(comments)} comments downloaded.")
     except Exception as e:
-        st.error(f"Failed to download comments: {e}"); st.stop()
+        st.error(f"Failed to download comments: {e}")
+        st.stop()
 
+    # ── Step 2: Use GPT to extract tracks ─────────────────────────
     st.info("Step 2: Extracting tracks via GPT…")
     client = OpenAI(api_key=api_key)
 
@@ -150,103 +125,9 @@ Comments:
             continue
 
     if used_model is None:
-        st.error("❌ GPT failed to extract any tracks or corrections."); st.stop()
+        st.error("❌ GPT failed to extract any tracks or corrections.")
+        st.stop()
 
     all_entries = tracks + corrections
     st.success(f"✅ {len(tracks)} tracks + {len(corrections)} corrections via {used_model}.")
     st.session_state["dj_tracks"] = all_entries
-
-# ── Track Display & YouTube Fetch ────────────────────────────────────────────────
-if "dj_tracks" in st.session_state:
-    all_entries = st.session_state["dj_tracks"]
-    st.write("### Tracks identified:")
-    for i, e in enumerate(all_entries, start=1):
-        st.write(f"{i}. {e['artist']} – {e['track']}")
-
-    st.write("---")
-    st.write("### Preview YouTube results (select to download)")
-
-    @st.cache_data(show_spinner=False)
-    def fetch_video_candidates(entries):
-        ydl = yt_dlp.YoutubeDL({"quiet": True, "skip_download": True})
-        vids = []
-        for e in entries:
-            query = f"{e['artist']} - {e['track']}"
-            try:
-                info = ydl.extract_info(f"ytsearch1:{query}", download=False)
-                vids.append(info["entries"][0])
-            except Exception:
-                vids.append(None)
-        return vids
-
-    video_results = fetch_video_candidates(all_entries)
-
-    to_download = []
-    for idx, video in enumerate(video_results):
-        entry = all_entries[idx]
-        label = f"{entry['artist']} – {entry['track']}"
-        if video is None:
-            st.error(f"No YouTube match for **{label}**")
-            continue
-
-        cols = st.columns([1, 4, 1])
-        thumb = video.get("thumbnail")
-        if thumb:
-            cols[0].image(thumb, width=100)
-        else:
-            cols[0].write("❓")
-
-        title = video.get("title", "Unknown title")
-        url = video.get("webpage_url", "#")
-        cols[1].markdown(f"**[{title}]({url})**")
-        cols[1].caption(f"Search: `{entry['artist']} - {entry['track']}`")
-
-        if cols[2].checkbox("", key=f"vid_{idx}"):
-            to_download.append(video)
-
-    st.write("---")
-    if to_download and st.button("Download Selected MP3s", key="dl_btn"):
-        st.info("📥 Downloading selected tracks…")
-        os.makedirs("downloads", exist_ok=True)
-        saved = []
-
-        for video in to_download:
-            title = video.get("title")
-            url = video.get("webpage_url")
-            st.write(f"▶️ {title}")
-            ydl_opts = {
-                "format": "bestaudio/best",
-                "outtmpl": os.path.join("downloads", "%(title)s.%(ext)s"),
-                "postprocessors": [{
-                    "key": "FFmpegExtractAudio",
-                    "preferredcodec": "mp3",
-                    "preferredquality": "192",
-                }],
-                "ffmpeg_location": FF_BIN,
-                "ffprobe_location": FP_BIN,
-                "quiet": True,
-            }
-            try:
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    info = ydl.extract_info(url, download=True)
-                    orig = ydl.prepare_filename(info)
-                    mp3 = os.path.splitext(orig)[0] + ".mp3"
-                    saved.append(mp3)
-                st.success(f"✅ {os.path.basename(mp3)}")
-            except Exception as e:
-                st.error(f"❌ Failed to download {title}: {e}")
-
-        for i, mp3_path in enumerate(saved):
-            if os.path.exists(mp3_path):
-                with open(mp3_path, "rb") as f:
-                    st.download_button(
-                        label=f"Save {os.path.basename(mp3_path)}",
-                        data=f,
-                        file_name=os.path.basename(mp3_path),
-                        mime="audio/mpeg",
-                        key=f"dl_{i}",
-                    )
-            else:
-                st.warning(f"File missing: {mp3_path}")
-    elif not to_download:
-        st.info("Select at least one video above to enable downloading.")
