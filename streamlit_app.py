@@ -161,7 +161,7 @@ if "dj_tracks" in st.session_state:
         st.write(f"{i}. {e['artist']} – {e['track']}")
 
     st.write("---")
-    st.write("### Preview YouTube results (select to download)")
+    st.write("### Preview YouTube results (select checkbox to download)")
 
     @st.cache_data(show_spinner=False)
     def fetch_video_candidates(entries):
