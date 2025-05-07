@@ -5,15 +5,11 @@ import stat
 import io
 import zipfile
 import json
-import re
 
 import streamlit as st
 import yt_dlp
 from openai import OpenAI
-from youtube_comment_downloader.downloader import (
-    YoutubeCommentDownloader,
-    SORT_BY_POPULAR,
-)
+from youtube_comment_downloader.downloader import YoutubeCommentDownloader, SORT_BY_POPULAR
 
 # ── BUNDLE IN FFmpeg AT RUNTIME ─────────────────────────────────────────────────
 FF_DIR = "ffmpeg-static"
@@ -23,24 +19,20 @@ FP_BIN = os.path.join(FF_DIR, "ffprobe")
 def ensure_ffmpeg():
     if os.path.isfile(FF_BIN) and os.path.isfile(FP_BIN):
         return
-
     os.makedirs(FF_DIR, exist_ok=True)
     url = "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
     local_tar = os.path.join(FF_DIR, "ffmpeg.tar.xz")
-
     with requests.get(url, stream=True) as r:
         r.raise_for_status()
         with open(local_tar, "wb") as f:
             for chunk in r.iter_content(chunk_size=8192):
                 f.write(chunk)
-
     with tarfile.open(local_tar, mode="r:xz") as tar:
         for member in tar.getmembers():
             name = os.path.basename(member.name)
             if name in ("ffmpeg", "ffprobe"):
                 member.name = name
                 tar.extract(member, FF_DIR)
-
     os.remove(local_tar)
     os.chmod(FF_BIN, stat.S_IXUSR | stat.S_IRUSR)
     os.chmod(FP_BIN, stat.S_IXUSR | stat.S_IRUSR)
@@ -50,33 +42,39 @@ ensure_ffmpeg()
 st.set_page_config(page_title="DJ Set Tracklist & MP3 Downloader", layout="centered")
 st.title("🎧 DJ Set Tracklist Extractor & MP3 Downloader")
 
-# ── CONFIG ────────────────────────────────────────────────────────────────────────
-api_key = st.secrets.get("OPENAI_API_KEY", "")
-COMMENT_LIMIT = 100
-SORT_FLAG = SORT_BY_POPULAR
-MODELS = ["gpt-4", "gpt-3.5-turbo"]
+# ── CONFIGURE DEFAULTS ────────────────────────────────────────────────────────────
+model_choice = "gpt-4"
+limit        = 100
+sort_flag    = SORT_BY_POPULAR
+api_key      = st.secrets.get("OPENAI_API_KEY", "")
 
-video_url = st.text_input("YouTube DJ Set URL", placeholder="https://www.youtube.com/watch?v=...")
-if st.button("Extract Tracks"):
+# ── MAIN INPUT & EXTRACTION ───────────────────────────────────────────────────────
+video_url = st.text_input(
+    "YouTube DJ Set URL",
+    placeholder="https://www.youtube.com/watch?v=..."
+)
+cols = st.columns([1, 1])
+if cols[0].button("Extract Tracks", key="extract_btn"):
+    # Validate
     if not api_key:
         st.error("OpenAI API key is missing from your secrets!"); st.stop()
     if not video_url.strip():
         st.error("Please enter a YouTube URL."); st.stop()
 
-    # Step 1: reviewing comments…
-    st.info("Step 1: reviewing comments…")
+    # Step 1: Reviewing comments...
+    st.info("Step 1: Reviewing comments...")
     try:
-        downloader = YoutubeCommentDownloader()
-        raw_comments = downloader.get_comments_from_url(video_url, sort_by=SORT_FLAG)
-        comments = [c.get("text","") for c in raw_comments][:COMMENT_LIMIT]
+        downloader    = YoutubeCommentDownloader()
+        raw_comments  = downloader.get_comments_from_url(video_url, sort_by=sort_flag)
+        comments      = [c.get("text","") for c in raw_comments][:limit]
         if not comments:
             raise RuntimeError("No comments found.")
-        st.success(f"✅ {len(comments)} comments downloaded.")
+        st.success(f"✅ {len(comments)} comments reviewed.")
     except Exception as e:
         st.error(f"Failed to download comments: {e}"); st.stop()
 
-    # Step 2: extracting Track IDs…
-    st.info("Step 2: extracting Track IDs…")
+    # Step 2: Extracting Track IDs
+    st.info("Step 2: Extracting Track IDs")
     client = OpenAI(api_key=api_key)
 
     system_prompt = """
@@ -116,8 +114,11 @@ Comments:
     snippet = "\n".join(comments[:100])
 
     def extract_json(raw: str) -> str:
-        m = re.search(r'\{[\s\S]*\}', raw)
-        return m.group(0) if m else raw.strip()
+        if raw.startswith("```"):
+            parts = raw.split("```")
+            if len(parts) >= 3:
+                return parts[1].strip()
+        return raw.strip()
 
     def ask(model_name: str) -> str:
         resp = client.chat.completions.create(
@@ -132,7 +133,7 @@ Comments:
         return resp.choices[0].message.content
 
     tracks, corrections, used_model = [], [], None
-    for m in MODELS:
+    for m in [model_choice, "gpt-3.5-turbo"]:
         try:
             raw    = ask(m)
             clean  = extract_json(raw)
@@ -148,14 +149,19 @@ Comments:
     if used_model is None:
         st.error("❌ GPT failed to extract any tracks or corrections."); st.stop()
 
-    all_entries = tracks + corrections
     st.success(f"✅ {len(tracks)} tracks + {len(corrections)} corrections.")
-    st.session_state["dj_tracks"] = all_entries
+    st.session_state["dj_tracks"] = tracks + corrections
+
+if cols[1].button("Reset", key="reset_btn"):
+    if "dj_tracks" in st.session_state:
+        del st.session_state["dj_tracks"]
+    st.experimental_rerun()
 
 # ── STEP 3 & 4: SHOW LIST, PREVIEW & DOWNLOAD ─────────────────────────────────
 if "dj_tracks" in st.session_state:
     all_entries = st.session_state["dj_tracks"]
 
+    # 1) Static list of tracks
     st.write("### Tracks identified:")
     for i, e in enumerate(all_entries, start=1):
         st.write(f"{i}. {e['artist']} – {e['track']}")
@@ -168,7 +174,7 @@ if "dj_tracks" in st.session_state:
         ydl_opts = {
             "quiet": True,
             "skip_download": True,
-            "extract_flat": True,
+            "extract_flat": True,   # don't fetch full metadata
         }
         vids = []
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -176,12 +182,13 @@ if "dj_tracks" in st.session_state:
                 query = f"{e['artist']} - {e['track']}"
                 try:
                     info = ydl.extract_info(f"ytsearch1:{query}", download=False)
-                    video = info["entries"][0]
+                    video     = info["entries"][0]
                     vid_id    = video.get("id") or video.get("url")
+                    title     = video.get("title")
                     thumbnail = f"https://img.youtube.com/vi/{vid_id}/hqdefault.jpg"
                     vids.append({
                         "id":           vid_id,
-                        "title":        video.get("title"),
+                        "title":        title,
                         "webpage_url":  f"https://www.youtube.com/watch?v={vid_id}",
                         "thumbnail":    thumbnail,
                     })
@@ -191,13 +198,14 @@ if "dj_tracks" in st.session_state:
 
     video_results = fetch_video_candidates(all_entries)
 
+    # 3) Render each thumbnail + title + checkbox
     to_download = []
     for idx, video in enumerate(video_results):
         entry = all_entries[idx]
+        label = f"{entry['artist']} – {entry['track']}"
         if video is None:
-            st.error(f"No YouTube match for **{entry['artist']} – {entry['track']}**")
+            st.error(f"No YouTube match for **{label}**")
             continue
-
         cols = st.columns([1, 4, 1])
         cols[0].image(video["thumbnail"], width=100)
         cols[1].markdown(f"**[{video['title']}]({video['webpage_url']})**")
@@ -206,7 +214,7 @@ if "dj_tracks" in st.session_state:
             to_download.append(video)
 
     st.write("---")
-    if to_download and st.button("Download Selected MP3s"):
+    if to_download and st.button("Download Selected MP3s", key="dl_btn"):
         st.info("Preparing selected tracks…")
         os.makedirs("downloads", exist_ok=True)
         saved = []
@@ -237,6 +245,7 @@ if "dj_tracks" in st.session_state:
             except Exception as e:
                 st.error(f"❌ Failed to download {title}: {e}")
 
+        # Bundle into ZIP
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w") as zf:
             for p in saved:
@@ -250,6 +259,7 @@ if "dj_tracks" in st.session_state:
                 data=buf,
                 file_name="dj_tracks.zip",
                 mime="application/zip",
+                key="zip_dl",
             )
         else:
             st.warning("No files were downloaded successfully.")
