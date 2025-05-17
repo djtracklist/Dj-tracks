@@ -50,26 +50,14 @@ ensure_ffmpeg()
 st.set_page_config(page_title="DJ Set Tracklist & MP3 Downloader", layout="centered")
 st.title("🎧 DJ Set Tracklist Extractor & MP3 Downloader")
 
-# ── MANUAL SEARCH UI ──────────────────────────────────────────────────────────────
-st.write("## Or search a single track")
-artist_input = st.text_input("Artist name", key="artist_input")
-track_input  = st.text_input("Track title", key="track_input")
-if st.button("Search Track", key="search_btn"):
-    if not artist_input.strip() or not track_input.strip():
-        st.error("Please enter both artist and track title.")
-    else:
-        st.session_state["dj_tracks"] = [
-            {"artist": artist_input.strip(), "track": track_input.strip()}
-        ]
-
 # ── CONFIG ────────────────────────────────────────────────────────────────────────
-api_key       = st.secrets.get("OPENAI_API_KEY", "")
+api_key = st.secrets.get("OPENAI_API_KEY", "")
 COMMENT_LIMIT = 100
-SORT_FLAG     = SORT_BY_POPULAR
-MODELS        = ["gpt-4", "gpt-3.5-turbo"]
+SORT_FLAG = SORT_BY_POPULAR
+MODELS = ["gpt-4", "gpt-3.5-turbo"]
 
 video_url = st.text_input("YouTube DJ Set URL", placeholder="https://www.youtube.com/watch?v=...")
-if st.button("Extract Tracks", key="extract_btn"):
+if st.button("Extract Tracks"):
     if not api_key:
         st.error("OpenAI API key is missing from your secrets!"); st.stop()
     if not video_url.strip():
@@ -78,9 +66,9 @@ if st.button("Extract Tracks", key="extract_btn"):
     # Step 1: reviewing comments…
     st.info("Step 1: reviewing comments…")
     try:
-        downloader   = YoutubeCommentDownloader()
+        downloader = YoutubeCommentDownloader()
         raw_comments = downloader.get_comments_from_url(video_url, sort_by=SORT_FLAG)
-        comments     = [c.get("text","") for c in raw_comments][:COMMENT_LIMIT]
+        comments = [c.get("text","") for c in raw_comments][:COMMENT_LIMIT]
         if not comments:
             raise RuntimeError("No comments found.")
         st.success(f"✅ {len(comments)} comments downloaded.")
@@ -249,20 +237,18 @@ if "dj_tracks" in st.session_state:
             except Exception as e:
                 st.error(f"❌ Failed to download {title}: {e}")
 
-        buf = io.BytesIO()
-        with zipfile.ZipFile(buf, "w") as zf:
-            for p in saved:
-                if os.path.exists(p):
-                    zf.write(p, arcname=os.path.basename(p))
-        buf.seek(0)
-
+        # individual MP3 download buttons instead of ZIP
         if saved:
-            st.download_button(
-                "Download All as ZIP",
-                data=buf,
-                file_name="dj_tracks.zip",
-                mime="application/zip",
-            )
+            for path in saved:
+                if os.path.exists(path):
+                    with open(path, "rb") as f:
+                        data = f.read()
+                    st.download_button(
+                        label=f"Download {os.path.basename(path)}",
+                        data=data,
+                        file_name=os.path.basename(path),
+                        mime="audio/mp3",
+                    )
         else:
             st.warning("No files were downloaded successfully.")
     elif not to_download:
