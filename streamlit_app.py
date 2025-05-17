@@ -50,36 +50,44 @@ ensure_ffmpeg()
 st.set_page_config(page_title="DJ Set Tracklist & MP3 Downloader", layout="centered")
 st.title("🎧 DJ Set Tracklist Extractor & MP3 Downloader")
 
+# ── MANUAL ENTRY ─────────────────────────────────────────────────────────────────
+artist_input = st.text_input("Artist (optional)", "")
+track_input  = st.text_input("Track Title (optional)", "")
+
 # ── CONFIG ────────────────────────────────────────────────────────────────────────
-api_key = st.secrets.get("OPENAI_API_KEY", "")
+api_key       = st.secrets.get("OPENAI_API_KEY", "")
 COMMENT_LIMIT = 100
-SORT_FLAG = SORT_BY_POPULAR
-MODELS = ["gpt-4", "gpt-3.5-turbo"]
+SORT_FLAG     = SORT_BY_POPULAR
+MODELS        = ["gpt-4", "gpt-3.5-turbo"]
 
 video_url = st.text_input("YouTube DJ Set URL", placeholder="https://www.youtube.com/watch?v=...")
 if st.button("Extract Tracks"):
     if not api_key:
         st.error("OpenAI API key is missing from your secrets!"); st.stop()
-    if not video_url.strip():
-        st.error("Please enter a YouTube URL."); st.stop()
+    if not video_url.strip() and not (artist_input.strip() and track_input.strip()):
+        st.error("Please enter a YouTube URL or provide both Artist and Track Title."); st.stop()
 
-    # Step 1: reviewing comments…
-    st.info("Step 1: reviewing comments…")
-    try:
-        downloader = YoutubeCommentDownloader()
-        raw_comments = downloader.get_comments_from_url(video_url, sort_by=SORT_FLAG)
-        comments = [c.get("text","") for c in raw_comments][:COMMENT_LIMIT]
-        if not comments:
-            raise RuntimeError("No comments found.")
-        st.success(f"✅ {len(comments)} comments downloaded.")
-    except Exception as e:
-        st.error(f"Failed to download comments: {e}"); st.stop()
+    all_entries = []
 
-    # Step 2: extracting Track IDs…
-    st.info("Step 2: extracting Track IDs…")
-    client = OpenAI(api_key=api_key)
+    # If URL given, do comments → GPT extraction
+    if video_url.strip():
+        # Step 1: reviewing comments…
+        st.info("Step 1: reviewing comments…")
+        try:
+            downloader = YoutubeCommentDownloader()
+            raw_comments = downloader.get_comments_from_url(video_url, sort_by=SORT_FLAG)
+            comments = [c.get("text","") for c in raw_comments][:COMMENT_LIMIT]
+            if not comments:
+                raise RuntimeError("No comments found.")
+            st.success(f"✅ {len(comments)} comments downloaded.")
+        except Exception as e:
+            st.error(f"Failed to download comments: {e}"); st.stop()
 
-    system_prompt = """
+        # Step 2: extracting Track IDs…
+        st.info("Step 2: extracting Track IDs…")
+        client = OpenAI(api_key=api_key)
+
+        system_prompt = """
 You are a world-class DJ-set tracklist curator with a complete music knowledge base.
 Given raw YouTube comment texts, do two things:
 1) Extract all timestamped track mentions in the form:
@@ -93,7 +101,7 @@ Return ONLY a JSON object with keys "tracks" and "corrections", each a list of o
   label   (string or empty)
 No extra keys or commentary.
 """
-    few_shot = """
+        few_shot = """
 ### Example Input:
 Comments:
 03:45 John Noseda - Climax
@@ -113,43 +121,53 @@ Comments:
   ]
 }
 """
-    snippet = "\n".join(comments[:100])
+        snippet = "\n".join(comments[:100])
 
-    def extract_json(raw: str) -> str:
-        m = re.search(r'\{[\s\S]*\}', raw)
-        return m.group(0) if m else raw.strip()
+        def extract_json(raw: str) -> str:
+            m = re.search(r'\{[\s\S]*\}', raw)
+            return m.group(0) if m else raw.strip()
 
-    def ask(model_name: str) -> str:
-        resp = client.chat.completions.create(
-            model=model_name,
-            messages=[
-                {"role":"system","content":system_prompt},
-                {"role":"assistant","content":few_shot},
-                {"role":"user","content":f"Comments:\n{snippet}"},
-            ],
-            temperature=0,
-        )
-        return resp.choices[0].message.content
+        def ask(model_name: str) -> str:
+            resp = client.chat.completions.create(
+                model=model_name,
+                messages=[
+                    {"role":"system","content":system_prompt},
+                    {"role":"assistant","content":few_shot},
+                    {"role":"user","content":f"Comments:\n{snippet}"},
+                ],
+                temperature=0,
+            )
+            return resp.choices[0].message.content
 
-    tracks, corrections, used_model = [], [], None
-    for m in MODELS:
-        try:
-            raw    = ask(m)
-            clean  = extract_json(raw)
-            parsed = json.loads(clean)
-            if isinstance(parsed, dict) and "tracks" in parsed and "corrections" in parsed:
-                tracks      = parsed["tracks"]
-                corrections = parsed["corrections"]
-                used_model  = m
-                break
-        except Exception:
-            continue
+        tracks, corrections, used_model = [], [], None
+        for m in MODELS:
+            try:
+                raw    = ask(m)
+                clean  = extract_json(raw)
+                parsed = json.loads(clean)
+                if isinstance(parsed, dict) and "tracks" in parsed and "corrections" in parsed:
+                    tracks      = parsed["tracks"]
+                    corrections = parsed["corrections"]
+                    used_model  = m
+                    break
+            except Exception:
+                continue
 
-    if used_model is None:
-        st.error("❌ GPT failed to extract any tracks or corrections."); st.stop()
+        if used_model is None:
+            st.error("❌ GPT failed to extract any tracks or corrections."); st.stop()
 
-    all_entries = tracks + corrections
-    st.success(f"✅ {len(tracks)} tracks + {len(corrections)} corrections.")
+        st.success(f"✅ {len(tracks)} tracks + {len(corrections)} corrections.")
+        all_entries = tracks + corrections
+
+    # If manual artist+track provided, append it
+    if artist_input.strip() and track_input.strip():
+        all_entries.append({
+            "artist": artist_input.strip(),
+            "track":  track_input.strip(),
+            "version": "",
+            "label":   ""
+        })
+
     st.session_state["dj_tracks"] = all_entries
 
 # ── STEP 3 & 4: SHOW LIST, PREVIEW & DOWNLOAD ─────────────────────────────────
@@ -237,7 +255,7 @@ if "dj_tracks" in st.session_state:
             except Exception as e:
                 st.error(f"❌ Failed to download {title}: {e}")
 
-        # individual MP3 download buttons instead of ZIP
+        # now offer each MP3 individually:
         if saved:
             for path in saved:
                 if os.path.exists(path):
