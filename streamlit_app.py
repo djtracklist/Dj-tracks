@@ -204,7 +204,7 @@ if "dj_tracks" in st.session_state:
     for idx, e in enumerate(entries, start=1):
         st.write(f"{idx}. {e['artist']} – {e['track']}")
     st.write("---")
-    st.write("### Preview YouTube results (select checkbox to download)")
+    st.write("### Preview YouTube results (select which to download)")
     candidates = fetch_video_candidates(entries)
     to_download = []
     for i, vid in enumerate(candidates):
@@ -212,37 +212,50 @@ if "dj_tracks" in st.session_state:
         if not vid:
             st.error(f"No match for {entry['artist']} – {entry['track']}")
             continue
-        col1, col2, col3 = st.columns([1,4,1])
+        col1, col2, col3 = st.columns([1, 4, 1])
         col1.image(vid['thumbnail'], width=100)
         col2.markdown(f"**[{vid['title']}]({vid['webpage_url']})**")
         col2.caption(f"Search: `{entry['artist']} - {entry['track']}`")
         if col3.checkbox("", key=f"select_{i}"):
             to_download.append(vid)
+
     st.write("---")
+    # Trigger downloads and store list in session state
     if to_download and st.button("Download Selected MP3s", key="download_selected"):
         st.info("Downloading MP3s…")
         os.makedirs("downloads", exist_ok=True)
-        saved = []
+        downloaded = []
         for vid in to_download:
             opts = {
-                "format":"bestaudio/best",
-                "outtmpl":os.path.join("downloads","%(title)s.%(ext)s"),
-                "postprocessors":[{"key":"FFmpegExtractAudio","preferredcodec":"mp3","preferredquality":"192"}],
-                "ffmpeg_location":FF_BIN,
-                "ffprobe_location":FP_BIN,
-                "quiet":True
+                "format": "bestaudio/best",
+                "outtmpl": os.path.join("downloads", "%(title)s.%(ext)s"),
+                "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}],
+                "ffmpeg_location": FF_BIN,
+                "ffprobe_location": FP_BIN,
+                "quiet": True
             }
             try:
                 with yt_dlp.YoutubeDL(opts) as ydl:
                     info = ydl.extract_info(vid['webpage_url'], download=True)
-                    mp3 = ydl.prepare_filename(info).rsplit('.',1)[0]+".mp3"
-                    saved.append(mp3)
+                    mp3 = ydl.prepare_filename(info).rsplit('.', 1)[0] + ".mp3"
+                    downloaded.append(mp3)
                 st.success(f"✅ {os.path.basename(mp3)}")
-            except Exception:
-                st.error(f"Error downloading {vid['title']}")
-        for path in saved:
+            except Exception as ex:
+                st.error(f"Error downloading {vid['title']}: {ex}")
+        st.session_state["downloaded_tracks"] = downloaded
+
+    # Render persistent download buttons
+    if "downloaded_tracks" in st.session_state:
+        for path in st.session_state["downloaded_tracks"]:
             if os.path.exists(path):
-                with open(path,"rb") as f:
+                with open(path, "rb") as f:
                     data = f.read()
-                st.download_button(label=f"Download {os.path.basename(path)}", data=data, file_name=os.path.basename(path), mime="audio/mp3")
-                
+                st.download_button(
+                    label=f"Download {os.path.basename(path)}",
+                    data=data,
+                    file_name=os.path.basename(path),
+                    mime="audio/mp3",
+                )
+    elif not to_download:
+        st.info("Select at least one track to enable download.")
+        
