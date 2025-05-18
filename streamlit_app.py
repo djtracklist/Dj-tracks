@@ -26,20 +26,35 @@ def ensure_ffmpeg():
         "ffmpeg-release-amd64-static.tar.xz"
     )
     local_tar = os.path.join(FF_DIR, "ffmpeg.tar.xz")
+    # Download archive
     with requests.get(url, stream=True) as r:
         r.raise_for_status()
         with open(local_tar, "wb") as f:
             for chunk in r.iter_content(chunk_size=8192):
                 f.write(chunk)
-    with tarfile.open(local_tar, mode="r:xz") as tar:
-        for member in tar.getmembers():
-            name = os.path.basename(member.name)
-            if name in ("ffmpeg", "ffprobe"):
-                member.name = name
-                tar.extract(member, FF_DIR)
-    os.remove(local_tar)
-    os.chmod(FF_BIN, stat.S_IXUSR | stat.S_IRUSR)
-    os.chmod(FP_BIN, stat.S_IXUSR | stat.S_IRUSR)
+    # Extract binaries
+    try:
+        with tarfile.open(local_tar, mode="r:xz") as tar:
+            for member in tar.getmembers():
+                name = os.path.basename(member.name)
+                if name in ("ffmpeg", "ffprobe"):
+                    member.name = name
+                    try:
+                        tar.extract(member, FF_DIR)
+                    except (EOFError, tarfile.ReadError) as e:
+                        st.warning(f"Warning: failed to extract {name}: {e}")
+                        continue
+    except (EOFError, tarfile.ReadError) as e:
+        st.error(f"Error unpacking ffmpeg archive: {e}")
+    finally:
+        if os.path.exists(local_tar):
+            os.remove(local_tar)
+    # Set executable permissions
+    try:
+        os.chmod(FF_BIN, stat.S_IXUSR | stat.S_IRUSR)
+        os.chmod(FP_BIN, stat.S_IXUSR | stat.S_IRUSR)
+    except Exception as perm_err:
+        st.warning(f"Could not set FFmpeg permissions: {perm_err}")
 
 ensure_ffmpeg()
 
