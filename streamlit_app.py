@@ -10,7 +10,7 @@ import yt_dlp
 from openai import OpenAI
 from youtube_comment_downloader.downloader import YoutubeCommentDownloader, SORT_BY_POPULAR
 
-# BUNDLE IN FFmpeg AT RUNTIME
+# ── BUNDLE IN FFmpeg AT RUNTIME ─────────────────────────────────────────────────
 FF_DIR = "ffmpeg-static"
 FF_BIN = os.path.join(FF_DIR, "ffmpeg")
 FP_BIN = os.path.join(FF_DIR, "ffprobe")
@@ -57,7 +57,10 @@ def fetch_video_candidates(entries):
             query = f"{e['artist']} - {e['track']}"
             try:
                 info = ydl.extract_info(f"ytsearch1:{query}", download=False)
-                video = info["entries"][0]
+                video = info.get("entries", [None])[0]
+                if not video:
+                    vids.append(None)
+                    continue
                 vid_id = video.get("id") or video.get("url")
                 thumbnail = f"https://img.youtube.com/vi/{vid_id}/hqdefault.jpg"
                 vids.append({
@@ -70,11 +73,11 @@ def fetch_video_candidates(entries):
                 vids.append(None)
     return vids
 
-# ── USER INPUTS ────────────────────────────────────────────────────────────────
+# ── USER INPUT: YouTube URL & Extract Button ─────────────────────────────────
 video_url = st.text_input("YouTube DJ Set URL", placeholder="https://www.youtube.com/watch?v=...")
 if st.button("Extract Tracks"):
     if not api_key:
-        st.error("OpenAI API key is missing from your secrets!")
+        st.error("OpenAI API key is missing!")
         st.stop()
     if not video_url.strip():
         st.error("Please enter a YouTube URL.")
@@ -97,28 +100,17 @@ if st.button("Extract Tracks"):
     st.info("Step 2: extracting track IDs…")
     client = OpenAI(api_key=api_key)
     system_prompt = (
-        "You are a world-class DJ-set tracklist curator with a complete music knowledge base.\n"
-        "Given raw YouTube comment texts, do two things:\n"
-        "1) Extract all timestamped track mentions in the form: MM:SS Artist - Track Title (optional remix/version and [label])\n"
-        "2) Extract any correction/update comments where a user writes 'edit:', 'correction:', 'update:', 'oops:', etc., clarifying a previous track.\n"
-        "Return ONLY a JSON object with keys 'tracks' and 'corrections', each a list of objects with fields:\n"
-        "  artist  (string)\n"
-        "  track   (string)\n"
-        "  version (string or empty)\n"
-        "  label   (string or empty)\n"
-        "No extra keys or commentary."
+        "You are a world-class DJ-set tracklist curator.\n"
+        "Given raw YouTube comment texts, extract timestamped tracks and corrections.\n"
+        "Return ONLY JSON with 'tracks' and 'corrections' lists (fields: artist, track, version, label)."
     )
     few_shot = (
         "### Example Input:\n"
         "Comments:\n03:45 John Noseda - Climax\n"
-        "05:10 Roy - Shooting Star [1987]\n"
-        "07:20 Cormac - Sparks\n"
+        "05:10 Roy - Shooting Star [1987]\n07:20 Cormac - Sparks\n"
         "10:00 edit: John Noseda - Climax (VIP Mix)\n\n"
         "### Example JSON Output:\n"
-        "{\n  \"tracks\": [\n    {\"artist\":\"John Noseda\",\"track\":\"Climax\",\"version\":\"\",\"label\":\"\"},\n"
-        "    {\"artist\":\"Roy\",\"track\":\"Shooting Star\",\"version\":\"\",\"label\":\"1987\"},\n"
-        "    {\"artist\":\"Cormac\",\"track\":\"Sparks\",\"version\":\"\",\"label\":\"\"}\n  ],\n"
-        "  \"corrections\": [\n    {\"artist\":\"John Noseda\",\"track\":\"Climax\",\"version\":\"VIP Mix\",\"label\":\"\"}\n  ]\n}"
+        "{ 'tracks': [ {'artist':'John Noseda','track':'Climax','version':'','label':''}, ... ], 'corrections':[ ... ] }"
     )
     snippet = "\n".join(comments)
 
@@ -127,7 +119,7 @@ if st.button("Extract Tracks"):
         return m.group(0) if m else raw.strip()
 
     def ask_model(model_name: str) -> str:
-        resp = client.chat.completions.create(
+        response = client.chat.completions.create(
             model=model_name,
             messages=[
                 {"role": "system", "content": system_prompt},
@@ -136,14 +128,14 @@ if st.button("Extract Tracks"):
             ],
             temperature=0,
         )
-        return resp.choices[0].message.content
+        return response.choices[0].message.content
 
     tracks, corrections, used = [], [], None
     for m in MODELS:
         try:
-            raw_out = ask_model(m)
-            clean = extract_json(raw_out)
-            parsed = json.loads(clean)
+            raw_output = ask_model(m)
+            json_str = extract_json(raw_output)
+            parsed = json.loads(json_str)
             if isinstance(parsed, dict) and "tracks" in parsed and "corrections" in parsed:
                 tracks = parsed["tracks"]
                 corrections = parsed["corrections"]
@@ -157,40 +149,39 @@ if st.button("Extract Tracks"):
         st.stop()
 
     st.success(f"✅ {len(tracks)} tracks + {len(corrections)} corrections.")
-    all_entries = tracks + corrections
-    st.session_state["dj_tracks"] = all_entries
+    st.session_state["dj_tracks"] = tracks + corrections
 
 # ── MANUAL TRACK SEARCH ─────────────────────────────────────────────────────────
 st.write("---")
-artist_input = st.text_input("Artist (manual search)", key="manual_artist")
-track_input = st.text_input("Track Title (manual search)", key="manual_track")
+artist_manual = st.text_input("Artist (manual search)", key="manual_artist")
+track_manual = st.text_input("Track Title (manual search)", key="manual_track")
 if st.button("Search Tracks"):
-    if not artist_input.strip() or not track_input.strip():
+    if not artist_manual.strip() or not track_manual.strip():
         st.error("Please enter both artist and track title.")
     else:
-        manual_entries = [{"artist": artist_input.strip(), "track": track_input.strip()}]
-        results = fetch_video_candidates(manual_entries)
-        video = results[0]
+        manual_entries = [{"artist": artist_manual.strip(), "track": track_manual.strip()}]
+        manual_results = fetch_video_candidates(manual_entries)
+        video = manual_results[0]
         if not video:
-            st.error(f"No YouTube match for **{artist_input} – {track_input}**")
+            st.error(f"No YouTube match for **{artist_manual} – {track_manual}**")
         else:
             c1, c2, c3 = st.columns([1, 4, 1])
             c1.image(video['thumbnail'], width=100)
             c2.markdown(f"**[{video['title']}]({video['webpage_url']})**")
-            c2.caption(f"Search: `{artist_input} - {track_input}`")
+            c2.caption(f"Search: `{artist_manual} - {track_manual}`")
             if c3.checkbox("Download", key="manual_download"):
                 st.info("Downloading MP3…")
                 os.makedirs("downloads", exist_ok=True)
-                ydl_opts = {
+                opts = {
                     "format": "bestaudio/best",
-                    "outtmpl": os.path.join("downloads", "%(+title)s.%(ext)s"),
+                    "outtmpl": os.path.join("downloads", "%(title)s.%(ext)s"),
                     "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}],
                     "ffmpeg_location": FF_BIN,
                     "ffprobe_location": FP_BIN,
                     "quiet": True,
                 }
                 try:
-                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    with yt_dlp.YoutubeDL(opts) as ydl:
                         info = ydl.extract_info(video['webpage_url'], download=True)
                         mp3 = ydl.prepare_filename(info).rsplit('.', 1)[0] + ".mp3"
                     st.success(f"✅ {os.path.basename(mp3)}")
@@ -198,7 +189,7 @@ if st.button("Search Tracks"):
                         data = f.read()
                     st.download_button(label=f"Download {os.path.basename(mp3)}", data=data, file_name=os.path.basename(mp3), mime="audio/mp3")
                 except Exception as e:
-                    st.error(f"Error downloading {artist_input} – {track_input}: {e}")
+                    st.error(f"Error downloading {artist_manual} – {track_manual}: {e}")
 
 # ── EXTRACTED TRACKLIST PREVIEW & DOWNLOAD ─────────────────────────────────────
 if "dj_tracks" in st.session_state:
