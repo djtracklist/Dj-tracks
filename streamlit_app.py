@@ -7,6 +7,8 @@ import re
 
 import streamlit as st
 import yt_dlp
+import spotipy
+from spotipy.oauth2 import SpotifyOAuth
 from openai import OpenAI
 from youtube_comment_downloader.downloader import YoutubeCommentDownloader, SORT_BY_POPULAR
 
@@ -45,10 +47,14 @@ st.set_page_config(page_title="DJ Set Tracklist & MP3 Downloader", layout="cente
 st.title("🎧 DJ Set Tracklist Extractor & MP3 Downloader")
 
 # ── CONFIGURATION ──────────────────────────────────────────────────────────────
-OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY", "")
+OPENAI_API_KEY        = st.secrets.get("OPENAI_API_KEY", "")
+SPOTIFY_CLIENT_ID     = st.secrets.get("SPOTIFY_CLIENT_ID", "")
+SPOTIFY_CLIENT_SECRET = st.secrets.get("SPOTIFY_CLIENT_SECRET", "")
+SPOTIFY_REDIRECT_URI  = st.secrets.get("SPOTIFY_REDIRECT_URI", "http://localhost:8501/")
+
 COMMENT_LIMIT = 100
-SORT_FLAG = SORT_BY_POPULAR
-MODELS = ["gpt-4", "gpt-3.5-turbo"]
+SORT_FLAG     = SORT_BY_POPULAR
+MODELS        = ["gpt-4", "gpt-3.5-turbo"]
 
 # ── FETCH FUNCTION ─────────────────────────────────────────────────────────────
 @st.cache_data(show_spinner=False)
@@ -67,18 +73,19 @@ def fetch_video_candidates(entries):
                 vid_id = video.get("id") or video.get("url")
                 vids.append({
                     "id": vid_id,
-                    "title": video.get("title"),
+                    "title":      video.get("title"),
                     "webpage_url": f"https://www.youtube.com/watch?v={vid_id}",
-                    "thumbnail": f"https://img.youtube.com/vi/{vid_id}/hqdefault.jpg",
+                    "thumbnail":   f"https://img.youtube.com/vi/{vid_id}/hqdefault.jpg",
                 })
             except Exception:
                 vids.append(None)
     return vids
 
-# ── USER INPUT: YouTube URL & Extract Button ─────────────────────────────────
+# ── SECTION: YouTube Set Extraction ─────────────────────────────────────────────
 video_url = st.text_input(
     "YouTube DJ Set URL",
-    placeholder="https://www.youtube.com/watch?v=..."
+    placeholder="https://www.youtube.com/watch?v=...",
+    key="url_input"
 )
 if st.button("Extract Tracks", key="btn_extract"):
     if not OPENAI_API_KEY:
@@ -91,9 +98,9 @@ if st.button("Extract Tracks", key="btn_extract"):
     # Step 1: download comments
     st.info("Step 1: downloading comments…")
     try:
-        downloader = YoutubeCommentDownloader()
-        raw_comments = downloader.get_comments_from_url(video_url, sort_by=SORT_FLAG)
-        comments = [c.get("text", "") for c in raw_comments][:COMMENT_LIMIT]
+        downloader    = YoutubeCommentDownloader()
+        raw_comments  = downloader.get_comments_from_url(video_url, sort_by=SORT_FLAG)
+        comments      = [c.get("text", "") for c in raw_comments][:COMMENT_LIMIT]
         if not comments:
             raise RuntimeError("No comments found.")
         st.success(f"✅ {len(comments)} comments downloaded.")
@@ -132,9 +139,9 @@ if st.button("Extract Tracks", key="btn_extract"):
             raw_output = client.chat.completions.create(
                 model=model,
                 messages=[
-                    {"role": "system", "content": system_prompt},
+                    {"role": "system",    "content": system_prompt},
                     {"role": "assistant", "content": few_shot},
-                    {"role": "user", "content": f"Comments:\n{snippet}"},
+                    {"role": "user",      "content": f"Comments:\n{snippet}"},
                 ],
                 temperature=0,
             ).choices[0].message.content
@@ -147,15 +154,15 @@ if st.button("Extract Tracks", key="btn_extract"):
             )
 
             json_str = extract_json(raw_output)
-            parsed = json.loads(json_str)
+            parsed   = json.loads(json_str)
             if (
                 isinstance(parsed, dict)
                 and "tracks" in parsed
                 and "corrections" in parsed
             ):
-                tracks = parsed["tracks"]
+                tracks      = parsed["tracks"]
                 corrections = parsed["corrections"]
-                used_model = model
+                used_model  = model
                 break
         except Exception as e:
             st.error(f"Parsing failed for model {model}: {e}")
@@ -168,11 +175,11 @@ if st.button("Extract Tracks", key="btn_extract"):
     st.success(f"✅ {len(tracks)} tracks + {len(corrections)} corrections.")
     st.session_state["dj_tracks"] = tracks + corrections
 
-# ── MANUAL TRACK SEARCH ─────────────────────────────────────────────────────────
+# ── SECTION: Manual Track Search ─────────────────────────────────────────────────
 st.write("---")
 st.subheader("Manual Track Search")
 artist_manual = st.text_input("Artist", key="manual_artist")
-track_manual = st.text_input("Track Title", key="manual_track")
+track_manual  = st.text_input("Track Title", key="manual_track")
 if st.button("Search Track", key="btn_manual_search"):
     if not artist_manual.strip() or not track_manual.strip():
         st.error("Please enter both artist and track title.")
@@ -191,33 +198,24 @@ if "manual_video" in st.session_state:
         if st.button("Download Manual MP3", key="btn_manual_dl"):
             os.makedirs("downloads", exist_ok=True)
             opts = {
-                "format": "bestaudio/best",
-                "outtmpl": os.path.join("downloads", "%(title)s.%(ext)s"),
-                "postprocessors": [{
-                    "key": "FFmpegExtractAudio",
-                    "preferredcodec": "mp3",
-                    "preferredquality": "192",
-                }],
-                "ffmpeg_location": FF_BIN,
+                "format":            "bestaudio/best",
+                "outtmpl":           os.path.join("downloads", "%(title)s.%(ext)s"),
+                "postprocessors":   [{"key":"FFmpegExtractAudio","preferredcodec":"mp3","preferredquality":"192"}],
+                "ffmpeg_location":  FF_BIN,
                 "ffprobe_location": FP_BIN,
-                "quiet": True,
+                "quiet":             True,
             }
             with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(vid["webpage_url"], download=True)
-                mp3 = ydl.prepare_filename(info).rsplit('.', 1)[0] + ".mp3"
+                info = ydl.extract_info(vid['webpage_url'], download=True)
+                mp3  = ydl.prepare_filename(info).rsplit('.', 1)[0] + ".mp3"  
             st.success(f"✅ Downloaded {os.path.basename(mp3)}")
             with open(mp3, "rb") as f:
                 data = f.read()
-            st.download_button(
-                f"Download {os.path.basename(mp3)}",
-                data,
-                file_name=os.path.basename(mp3),
-                mime="audio/mp3",
-            )
+            st.download_button(f"Download {os.path.basename(mp3)}", data, file_name=os.path.basename(mp3), mime="audio/mp3")
     else:
         st.error(f"No match for {artist_manual} – {track_manual}")
 
-# ── EXTRACTED TRACKLIST PREVIEW & DOWNLOAD ─────────────────────────────────────
+# ── SECTION: Extracted Tracklist Preview & Download ─────────────────────────────
 if "dj_tracks" in st.session_state:
     entries = st.session_state["dj_tracks"]
     st.write("### Tracks identified:")
@@ -233,7 +231,7 @@ if "dj_tracks" in st.session_state:
         if not vid:
             st.error(f"No match for {entry['artist']} – {entry['track']}")
             continue
-        col1, col2, col3 = st.columns([1, 4, 1])
+        col1, col2, col3 = st.columns([1,4,1])
         col1.image(vid["thumbnail"], width=100)
         col2.markdown(f"**[{vid['title']}]({vid['webpage_url']})**")
         col2.caption(f"Search: `{entry['artist']} - {entry['track']}`")
@@ -246,20 +244,16 @@ if "dj_tracks" in st.session_state:
         st.session_state.setdefault("downloaded_tracks", [])
         for vid in to_dl:
             opts = {
-                "format": "bestaudio/best",
-                "outtmpl": os.path.join("downloads", "%(title)s.%(ext)s"),
-                "postprocessors": [{
-                    "key": "FFmpegExtractAudio",
-                    "preferredcodec": "mp3",
-                    "preferredquality": "192",
-                }],
-                "ffmpeg_location": FF_BIN,
+                "format":            "bestaudio/best",
+                "outtmpl":           os.path.join("downloads", "%(title)s.%(ext)s"),
+                "postprocessors":   [{"key":"FFmpegExtractAudio","preferredcodec":"mp3","preferredquality":"192"}],
+                "ffmpeg_location":  FF_BIN,
                 "ffprobe_location": FP_BIN,
-                "quiet": True,
+                "quiet":             True,
             }
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(vid["webpage_url"], download=True)
-                mp3 = ydl.prepare_filename(info).rsplit('.', 1)[0] + ".mp3"
+                mp3  = ydl.prepare_filename(info).rsplit('.',1)[0] + ".mp3"
             st.session_state["downloaded_tracks"].append(mp3)
             st.success(f"✅ Downloaded {os.path.basename(mp3)}")
 
@@ -270,9 +264,33 @@ if "dj_tracks" in st.session_state:
             if os.path.exists(path):
                 with open(path, "rb") as f:
                     data = f.read()
-                st.download_button(
-                    f"Download {os.path.basename(path)}",
-                    data,
-                    file_name=os.path.basename(path),
-                    mime="audio/mp3",
+                st.download_button(f"Download {os.path.basename(path)}", data, file_name=os.path.basename(path), mime="audio/mp3")
+
+# ── EXPORT TO SPOTIFY ───────────────────────────────────────────────────────────
+if "dj_tracks" in st.session_state:
+    if st.button("Export to Spotify", key="btn_spotify_export"):
+        if not (SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET):
+            st.error("Spotify credentials are missing in secrets!")
+        else:
+            sp = spotipy.Spotify(
+                auth_manager=SpotifyOAuth(
+                    client_id=SPOTIFY_CLIENT_ID,
+                    client_secret=SPOTIFY_CLIENT_SECRET,
+                    redirect_uri=SPOTIFY_REDIRECT_URI,
+                    scope="playlist-modify-public"
                 )
+            )
+            uris = []
+            for t in st.session_state["dj_tracks"]:
+                q = f"{t['artist']} {t['track']}"
+                res = sp.search(q=q, type="track", limit=1)
+                items = res.get("tracks", {}).get("items", [])
+                if items:
+                    uris.append(items[0]["uri"])
+                else:
+                    st.warning(f"No Spotify match for {q}")
+            if uris:
+                user_id = sp.current_user()["id"]
+                playlist = sp.user_playlist_create(user=user_id, name="My DJ Set", public=True)
+                sp.playlist_add_items(playlist["id"], uris)
+                st.success(f"🔗 Spotify playlist created: {playlist['external_urls']['spotify']}")
