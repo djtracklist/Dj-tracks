@@ -51,17 +51,77 @@ st.set_page_config(page_title="DJ Set Tracklist & MP3 Downloader", layout="cente
 st.title("🎧 DJ Set Tracklist Extractor & MP3 Downloader")
 
 # ── CONFIG ────────────────────────────────────────────────────────────────────────
-api_key = st.secrets.get("OPENAI_API_KEY", "")
+api_key       = st.secrets.get("OPENAI_API_KEY", "")
 COMMENT_LIMIT = 100
-SORT_FLAG = SORT_BY_POPULAR
-MODELS = ["gpt-4", "gpt-3.5-turbo"]
+SORT_FLAG     = SORT_BY_POPULAR
+MODELS        = ["gpt-4", "gpt-3.5-turbo"]
 
-# Main inputs
+# ── MAIN INPUT ───────────────────────────────────────────────────────────────────
 video_url = st.text_input("YouTube DJ Set URL", placeholder="https://www.youtube.com/watch?v=...")
-artist_search = st.text_input("Artist to search", placeholder="e.g. John Noseda")
-track_search = st.text_input("Track to search", placeholder="e.g. Climax")
 
-if st.button("Extract Tracks"):
+# ── MANUAL TRACK SEARCH ──────────────────────────────────────────────────────────
+st.write("### 🔎 Manual Track Search")
+artist      = st.text_input("Artist", key="artist_input")
+track_title = st.text_input("Track Title", key="track_input")
+if st.button("Search Track", key="manual_search"):
+    if not artist.strip() or not track_title.strip():
+        st.error("Please enter both artist and track title."); st.stop()
+
+    # search YouTube without downloading full metadata
+    ydl_opts = {"quiet": True, "skip_download": True, "extract_flat": True}
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(f"ytsearch1:{artist} - {track_title}", download=False)
+            video = info["entries"][0]
+    except Exception as e:
+        st.error(f"Search failed: {e}"); st.stop()
+
+    vid_id    = video.get("id") or video.get("url")
+    title     = video.get("title", "Unknown title")
+    url       = f"https://www.youtube.com/watch?v={vid_id}"
+    thumbnail = f"https://img.youtube.com/vi/{vid_id}/hqdefault.jpg"
+
+    cols = st.columns([1, 4, 1])
+    cols[0].image(thumbnail, width=100)
+    cols[1].markdown(f"**[{title}]({url})**")
+    cols[1].caption(f"Search: `{artist} - {track_title}`")
+
+    # download to mp3 in memory and offer a button
+    if cols[2].button("Download MP3", key="manual_dl"):
+        ydl_opts = {
+            "format": "bestaudio/best",
+            "outtmpl": os.path.join("downloads","%(title)s.%(ext)s"),
+            "postprocessors": [{
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "mp3",
+                "preferredquality": "192",
+            }],
+            "ffmpeg_location": FF_BIN,
+            "ffprobe_location": FP_BIN,
+            "quiet": True,
+        }
+        os.makedirs("downloads", exist_ok=True)
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                orig = ydl.prepare_filename(info)
+                mp3  = os.path.splitext(orig)[0] + ".mp3"
+            with open(mp3, "rb") as f:
+                mp3_bytes = f.read()
+            st.download_button(
+                "👉 Download MP3",
+                data=mp3_bytes,
+                file_name=f"{title}.mp3",
+                mime="audio/mpeg",
+                key="manual_download_button",
+            )
+        except Exception as e:
+            st.error(f"Failed to download MP3: {e}")
+
+st.write("---")
+
+# ── EXTRACT FROM DJ SET ──────────────────────────────────────────────────────────
+if st.button("Extract Tracks", key="extract_btn"):
     if not api_key:
         st.error("OpenAI API key is missing from your secrets!"); st.stop()
     if not video_url.strip():
@@ -70,9 +130,9 @@ if st.button("Extract Tracks"):
     # Step 1: reviewing comments…
     st.info("Step 1: reviewing comments…")
     try:
-        downloader = YoutubeCommentDownloader()
-        raw_comments = downloader.get_comments_from_url(video_url, sort_by=SORT_FLAG)
-        comments = [c.get("text","") for c in raw_comments][:COMMENT_LIMIT]
+        downloader    = YoutubeCommentDownloader()
+        raw_comments  = downloader.get_comments_from_url(video_url, sort_by=SORT_FLAG)
+        comments      = [c.get("text","") for c in raw_comments][:COMMENT_LIMIT]
         if not comments:
             raise RuntimeError("No comments found.")
         st.success(f"✅ {len(comments)} comments downloaded.")
