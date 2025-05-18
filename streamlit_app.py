@@ -211,7 +211,12 @@ if "manual_video" in st.session_state:
             st.success(f"✅ Downloaded {os.path.basename(mp3)}")
             with open(mp3, "rb") as f:
                 data = f.read()
-            st.download_button(f"Download {os.path.basename(mp3)}", data, file_name=os.path.basename(mp3), mime="audio/mp3")
+            st.download_button(
+                f"Download {os.path.basename(mp3)}",
+                data,
+                file_name=os.path.basename(mp3),
+                mime="audio/mp3",
+            )
     else:
         st.error(f"No match for {artist_manual} – {track_manual}")
 
@@ -264,13 +269,18 @@ if "dj_tracks" in st.session_state:
             if os.path.exists(path):
                 with open(path, "rb") as f:
                     data = f.read()
-                st.download_button(f"Download {os.path.basename(path)}", data, file_name=os.path.basename(path), mime="audio/mp3")
+                st.download_button(
+                    f"Download {os.path.basename(path)}",
+                    data,
+                    file_name=os.path.basename(path),
+                    mime="audio/mp3",
+                )
 
-# ── EXPORT TO SPOTIFY (Manual Auth Flow) ───────────────────────────────────────
+# ── EXPORT TO SPOTIFY (OAuth via Redirect) ───────────────────────────────────────
 if "dj_tracks" in st.session_state:
     st.write("---")
     st.subheader("Export to Spotify")
-    # Initialize OAuth manager
+    # Setup OAuth
     sp_oauth = SpotifyOAuth(
         client_id=SPOTIFY_CLIENT_ID,
         client_secret=SPOTIFY_CLIENT_SECRET,
@@ -279,59 +289,44 @@ if "dj_tracks" in st.session_state:
         show_dialog=True,
     )
 
-    # Step 1: get auth URL
+    # Step 1: authorization
     if "spotify_auth_url" not in st.session_state:
+        # generate auth URL and redirect user
         auth_url = sp_oauth.get_authorize_url()
         st.session_state["spotify_auth_url"] = auth_url
+        st.markdown(f"[Authorize with Spotify to Continue]({auth_url})")
     else:
-        auth_url = st.session_state["spotify_auth_url"]
-
-    st.markdown(
-        f"[1. Authorize with Spotify]({auth_url}){{:target=\"_blank\"}}"
-    )
-
-    # Step 2: user pastes redirect URL
-    redirect_response = st.text_input(
-        "2. Paste the full redirect URL after authorization", key="spotify_redirect"
-    )
-
-    # Step 3: exchange code for token
-    if redirect_response and "spotify_token" not in st.session_state:
-        try:
-            code = sp_oauth.parse_response_code(redirect_response)
-            token_info = sp_oauth.get_access_token(code)
-            st.session_state["spotify_token"] = token_info["access_token"]
-            st.success("✅ Spotify authorization successful!")
-        except Exception as e:
-            st.error(f"Spotify auth failed: {e}")
-
-    # Step 4: export playlist
-    if st.session_state.get("spotify_token"):
-        if st.button("Create Spotify Playlist", key="btn_spotify_create"):
+        # parse code from query parameters
+        params = st.experimental_get_query_params()
+        code = params.get("code", [None])[0]
+        if code and "spotify_token" not in st.session_state:
             try:
-                sp = spotipy.Spotify(auth=st.session_state["spotify_token"])
-                dj_tracks = st.session_state["dj_tracks"]
-                uris = []
-                for t in dj_tracks:
-                    query = f"{t['artist']} {t['track']}"
-                    res = sp.search(q=query, type="track", limit=1)
-                    items = res.get("tracks", {}).get("items", [])
-                    if items:
-                        uris.append(items[0]["uri"])
-                    else:
-                        st.warning(f"No Spotify match for {query}")
-                if uris:
-                    user_id  = sp.current_user()["id"]
-                    playlist = sp.user_playlist_create(
-                        user=user_id,
-                        name="My DJ Set Playlist",
-                        public=True
-                    )
-                    sp.playlist_add_items(playlist["id"], uris)
-                    st.success(
-                        f"🔗 Spotify playlist created: {playlist['external_urls']['spotify']}"
-                    )
-                else:
-                    st.error("No track URIs found; playlist not created.")
+                token_info = sp_oauth.get_access_token(code)
+                st.session_state["spotify_token"] = token_info["access_token"]
+                st.success("✅ Spotify authorization successful!")
             except Exception as e:
-                st.error(f"Error creating Spotify playlist: {e}")
+                st.error(f"Spotify auth failed: {e}")
+
+        # once token is present, allow playlist creation
+        if st.session_state.get("spotify_token"):
+            if st.button("Create Spotify Playlist", key="btn_spotify_create"):
+                try:
+                    sp = spotipy.Spotify(auth=st.session_state["spotify_token"])
+                    uris = []
+                    for t in st.session_state["dj_tracks"]:
+                        q = f"{t['artist']} {t['track']}"
+                        res = sp.search(q=q, type="track", limit=1)
+                        items = res.get("tracks", {}).get("items", [])
+                        if items:
+                            uris.append(items[0]["uri"])
+                        else:
+                            st.warning(f"No Spotify match for {q}")
+                    if uris:
+                        user_id = sp.current_user()["id"]
+                        playlist = sp.user_playlist_create(user=user_id, name="My DJ Set Playlist", public=True)
+                        sp.playlist_add_items(playlist["id"], uris)
+                        st.success(f"🔗 Spotify playlist created: {playlist['external_urls']['spotify']}")
+                    else:
+                        st.error("No track URIs found; playlist not created.")
+                except Exception as e:
+                    st.error(f"Error creating Spotify playlist: {e}")
