@@ -169,7 +169,7 @@ if to_download and st.button("Download Selected MP3s"):
         url = video["webpage_url"]
         st.write(f"▶️ {title}")
         ydl_opts = {
-            "format": "bestaudio/best",
+            "format": "bestaudio/best", 
             "outtmpl": os.path.join("downloads", "%(title)s.%(ext)s"),
             "postprocessors": [{
                 "key": "FFmpegExtractAudio",
@@ -247,15 +247,4 @@ if st.button("Search Track"):
                         orig = ydl.prepare_filename(info)
                         mp3 = os.path.splitext(orig)[0] + ".mp3"
                     st.success(f"✅ {os.path.basename(mp3)}")
-                    if os.path.exists(mp3):
-                        with open(mp3, "rb") as f:
-                            data = f.read()
-                        st.download_button(
-                            label=f"Download {os.path.basename(mp3)}",
-                            data=data,
-                            file_name=os.path.basename(mp3),
-                            mime="audio/mp3",
-                        )
-                except Exception as e:
-                    st.error(f"❌ Failed to download {manual_artist} – {manual_track}: {e}")
 
