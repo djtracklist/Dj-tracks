@@ -19,7 +19,10 @@ def ensure_ffmpeg():
     if os.path.isfile(FF_BIN) and os.path.isfile(FP_BIN):
         return
     os.makedirs(FF_DIR, exist_ok=True)
-    url = "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
+    url = (
+        "https://johnvansickle.com/ffmpeg/releases/"
+        "ffmpeg-release-amd64-static.tar.xz"
+    )
     local_tar = os.path.join(FF_DIR, "ffmpeg.tar.xz")
     with requests.get(url, stream=True) as r:
         r.raise_for_status()
@@ -66,14 +69,17 @@ def fetch_video_candidates(entries):
                     "id": vid_id,
                     "title": video.get("title"),
                     "webpage_url": f"https://www.youtube.com/watch?v={vid_id}",
-                    "thumbnail": f"https://img.youtube.com/vi/{vid_id}/hqdefault.jpg"
+                    "thumbnail": f"https://img.youtube.com/vi/{vid_id}/hqdefault.jpg",
                 })
             except Exception:
                 vids.append(None)
     return vids
 
 # ── USER INPUT: YouTube URL & Extract Button ─────────────────────────────────
-video_url = st.text_input("YouTube DJ Set URL", placeholder="https://www.youtube.com/watch?v=...", key="url_input")
+video_url = st.text_input(
+    "YouTube DJ Set URL",
+    placeholder="https://www.youtube.com/watch?v=..."
+)
 if st.button("Extract Tracks", key="btn_extract"):
     if not OPENAI_API_KEY:
         st.error("OpenAI API key is missing!")
@@ -95,8 +101,8 @@ if st.button("Extract Tracks", key="btn_extract"):
         st.error(f"Failed to download comments: {e}")
         st.stop()
 
-    # ⚠️ DEBUG: show first few comments
-    st.write("**Debug: Sample comments:**", comments[:5])
+    # Debug: show sample comments
+    st.write("**Debug: sample comments (5):**", comments[:5])
 
     # Step 2: extract tracklist via GPT
     st.info("Step 2: extracting track IDs…")
@@ -133,15 +139,23 @@ if st.button("Extract Tracks", key="btn_extract"):
                 temperature=0,
             ).choices[0].message.content
 
-            # ⚠️ DEBUG: show raw GPT response
-            st.text_area(f"Debug: GPT raw output (model={model})", raw_output, height=200)
+            # Debug: show raw GPT response
+            st.text_area(
+                f"Debug: GPT raw output (model={model})",
+                raw_output,
+                height=200
+            )
 
             json_str = extract_json(raw_output)
-            parsed   = json.loads(json_str)
-            if isinstance(parsed, dict) and "tracks" in parsed and "corrections" in parsed:
-                tracks      = parsed["tracks"]
+            parsed = json.loads(json_str)
+            if (
+                isinstance(parsed, dict)
+                and "tracks" in parsed
+                and "corrections" in parsed
+            ):
+                tracks = parsed["tracks"]
                 corrections = parsed["corrections"]
-                used_model  = model
+                used_model = model
                 break
         except Exception as e:
             st.error(f"Parsing failed for model {model}: {e}")
@@ -158,20 +172,20 @@ if st.button("Extract Tracks", key="btn_extract"):
 st.write("---")
 st.subheader("Manual Track Search")
 artist_manual = st.text_input("Artist", key="manual_artist")
-track_manual  = st.text_input("Track Title", key="manual_track")
+track_manual = st.text_input("Track Title", key="manual_track")
 if st.button("Search Track", key="btn_manual_search"):
     if not artist_manual.strip() or not track_manual.strip():
         st.error("Please enter both artist and track title.")
     else:
-        st.session_state["manual_video"] = fetch_video_candidates(
-            [{"artist": artist_manual.strip(), "track": track_manual.strip()}]
-        )[0]
+        st.session_state["manual_video"] = fetch_video_candidates([
+            {"artist": artist_manual.strip(), "track": track_manual.strip()}
+        ])[0]
 
 if "manual_video" in st.session_state:
     vid = st.session_state["manual_video"]
     if vid:
         c1, c2, c3 = st.columns([1, 4, 1])
-        c1.image(vid['thumbnail'], width=100)
+        c1.image(vid["thumbnail"], width=100)
         c2.markdown(f"**[{vid['title']}]({vid['webpage_url']})**")
         c2.caption(f"Search: `{artist_manual} - {track_manual}`")
         if st.button("Download Manual MP3", key="btn_manual_dl"):
@@ -179,18 +193,27 @@ if "manual_video" in st.session_state:
             opts = {
                 "format": "bestaudio/best",
                 "outtmpl": os.path.join("downloads", "%(title)s.%(ext)s"),
-                "postprocessors": [{"key":"FFmpegExtractAudio","preferredcodec":"mp3","preferredquality":"192"}],
+                "postprocessors": [{
+                    "key": "FFmpegExtractAudio",
+                    "preferredcodec": "mp3",
+                    "preferredquality": "192",
+                }],
                 "ffmpeg_location": FF_BIN,
                 "ffprobe_location": FP_BIN,
                 "quiet": True,
             }
             with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(vid['webpage_url'], download=True)
-                mp3  = ydl.prepare_filename(info).rsplit('.',1)[0] + ".mp3"
+                info = ydl.extract_info(vid["webpage_url"], download=True)
+                mp3 = ydl.prepare_filename(info).rsplit('.', 1)[0] + ".mp3"
             st.success(f"✅ Downloaded {os.path.basename(mp3)}")
             with open(mp3, "rb") as f:
                 data = f.read()
-            st.download_button(f"Download {os.path.basename(mp3)}", data=data, file_name=os.path.basename(mp3), mime="audio/mp3")
+            st.download_button(
+                f"Download {os.path.basename(mp3)}",
+                data,
+                file_name=os.path.basename(mp3),
+                mime="audio/mp3",
+            )
     else:
         st.error(f"No match for {artist_manual} – {track_manual}")
 
@@ -200,8 +223,9 @@ if "dj_tracks" in st.session_state:
     st.write("### Tracks identified:")
     for idx, e in enumerate(entries, start=1):
         st.write(f"{idx}. {e['artist']} – {e['track']}")
+
     st.write("---")
-    st.write("### Preview YouTube results (select checkbox to download)")
+    st.write("### Preview YouTube results (select to download)")
     results = fetch_video_candidates(entries)
     to_dl = []
     for i, vid in enumerate(results):
@@ -209,17 +233,46 @@ if "dj_tracks" in st.session_state:
         if not vid:
             st.error(f"No match for {entry['artist']} – {entry['track']}")
             continue
-        col1, col2, col3 = st.columns([1,4,1])
-        col1.image(vid['thumbnail'], width=100)
+        col1, col2, col3 = st.columns([1, 4, 1])
+        col1.image(vid["thumbnail"], width=100)
         col2.markdown(f"**[{vid['title']}]({vid['webpage_url']})**")
         col2.caption(f"Search: `{entry['artist']} - {entry['track']}`")
         if col3.checkbox("Select", key=f"sel_{i}"):
             to_dl.append(vid)
+
     st.write("---")
     if to_dl and st.button("Download Selected MP3s", key="btn_bulk_dl"):
         os.makedirs("downloads", exist_ok=True)
         st.session_state.setdefault("downloaded_tracks", [])
         for vid in to_dl:
             opts = {
-                "format":"bestaudio/best",
-                "outtmpl":os.path.join("downloads","%
+                "format": "bestaudio/best",
+                "outtmpl": os.path.join("downloads", "%(title)s.%(ext)s"),
+                "postprocessors": [{
+                    "key": "FFmpegExtractAudio",
+                    "preferredcodec": "mp3",
+                    "preferredquality": "192",
+                }],
+                "ffmpeg_location": FF_BIN,
+                "ffprobe_location": FP_BIN,
+                "quiet": True,
+            }
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(vid["webpage_url"], download=True)
+                mp3 = ydl.prepare_filename(info).rsplit('.', 1)[0] + ".mp3"
+            st.session_state["downloaded_tracks"].append(mp3)
+            st.success(f"✅ Downloaded {os.path.basename(mp3)}")
+
+    # persistent download buttons
+    if st.session_state.get("downloaded_tracks"):
+        st.write("---")
+        for path in st.session_state["downloaded_tracks"]:
+            if os.path.exists(path):
+                with open(path, "rb") as f:
+                    data = f.read()
+                st.download_button(
+                    f"Download {os.path.basename(path)}",
+                    data,
+                    file_name=os.path.basename(path),
+                    mime="audio/mp3",
+                )
