@@ -121,10 +121,7 @@ if st.button("Extract Tracks", key="btn_extract"):
         st.success(f"✅ {len(comments)} comments downloaded.")
     except Exception as e:
         st.error(f"Failed to download comments: {e}")
-        st.stop()
-
-    # Debug: show sample comments
-    st.write("**Debug: sample comments (5):**", comments[:5])
+        st.stop()    st.write("**Debug: sample comments (5):**", comments[:5])
 
     # Step 2: extract tracklist via GPT
     st.info("Step 2: extracting track IDs…")
@@ -159,10 +156,7 @@ if st.button("Extract Tracks", key="btn_extract"):
                     {"role": "user",      "content": f"Comments:\n{snippet}"},
                 ],
                 temperature=0,
-            ).choices[0].message.content
-
-            # Debug: show raw GPT response
-            st.text_area(
+            ).choices[0].message.content            st.text_area(
                 f"Debug: GPT raw output (model={model})",
                 raw_output,
                 height=200
