@@ -3,4 +3,4 @@ yt-dlp
 openai
 youtube-comment-downloader
 requests
-spotipy>=2.27.0
+spotipy
