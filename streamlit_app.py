@@ -266,31 +266,72 @@ if "dj_tracks" in st.session_state:
                     data = f.read()
                 st.download_button(f"Download {os.path.basename(path)}", data, file_name=os.path.basename(path), mime="audio/mp3")
 
-# ── EXPORT TO SPOTIFY ───────────────────────────────────────────────────────────
+# ── EXPORT TO SPOTIFY (Manual Auth Flow) ───────────────────────────────────────
 if "dj_tracks" in st.session_state:
-    if st.button("Export to Spotify", key="btn_spotify_export"):
-        if not (SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET):
-            st.error("Spotify credentials are missing in secrets!")
-        else:
-            sp = spotipy.Spotify(
-                auth_manager=SpotifyOAuth(
-                    client_id=SPOTIFY_CLIENT_ID,
-                    client_secret=SPOTIFY_CLIENT_SECRET,
-                    redirect_uri=SPOTIFY_REDIRECT_URI,
-                    scope="playlist-modify-public"
-                )
-            )
-            uris = []
-            for t in st.session_state["dj_tracks"]:
-                q = f"{t['artist']} {t['track']}"
-                res = sp.search(q=q, type="track", limit=1)
-                items = res.get("tracks", {}).get("items", [])
-                if items:
-                    uris.append(items[0]["uri"])
+    st.write("---")
+    st.subheader("Export to Spotify")
+    # Initialize OAuth manager
+    sp_oauth = SpotifyOAuth(
+        client_id=SPOTIFY_CLIENT_ID,
+        client_secret=SPOTIFY_CLIENT_SECRET,
+        redirect_uri=SPOTIFY_REDIRECT_URI,
+        scope="playlist-modify-public",
+        show_dialog=True,
+    )
+
+    # Step 1: get auth URL
+    if "spotify_auth_url" not in st.session_state:
+        auth_url = sp_oauth.get_authorize_url()
+        st.session_state["spotify_auth_url"] = auth_url
+    else:
+        auth_url = st.session_state["spotify_auth_url"]
+
+    st.markdown(
+        f"[1. Authorize with Spotify]({auth_url}){{:target=\"_blank\"}}"
+    )
+
+    # Step 2: user pastes redirect URL
+    redirect_response = st.text_input(
+        "2. Paste the full redirect URL after authorization", key="spotify_redirect"
+    )
+
+    # Step 3: exchange code for token
+    if redirect_response and "spotify_token" not in st.session_state:
+        try:
+            code = sp_oauth.parse_response_code(redirect_response)
+            token_info = sp_oauth.get_access_token(code)
+            st.session_state["spotify_token"] = token_info["access_token"]
+            st.success("✅ Spotify authorization successful!")
+        except Exception as e:
+            st.error(f"Spotify auth failed: {e}")
+
+    # Step 4: export playlist
+    if st.session_state.get("spotify_token"):
+        if st.button("Create Spotify Playlist", key="btn_spotify_create"):
+            try:
+                sp = spotipy.Spotify(auth=st.session_state["spotify_token"])
+                dj_tracks = st.session_state["dj_tracks"]
+                uris = []
+                for t in dj_tracks:
+                    query = f"{t['artist']} {t['track']}"
+                    res = sp.search(q=query, type="track", limit=1)
+                    items = res.get("tracks", {}).get("items", [])
+                    if items:
+                        uris.append(items[0]["uri"])
+                    else:
+                        st.warning(f"No Spotify match for {query}")
+                if uris:
+                    user_id  = sp.current_user()["id"]
+                    playlist = sp.user_playlist_create(
+                        user=user_id,
+                        name="My DJ Set Playlist",
+                        public=True
+                    )
+                    sp.playlist_add_items(playlist["id"], uris)
+                    st.success(
+                        f"🔗 Spotify playlist created: {playlist['external_urls']['spotify']}"
+                    )
                 else:
-                    st.warning(f"No Spotify match for {q}")
-            if uris:
-                user_id = sp.current_user()["id"]
-                playlist = sp.user_playlist_create(user=user_id, name="My DJ Set", public=True)
-                sp.playlist_add_items(playlist["id"], uris)
-                st.success(f"🔗 Spotify playlist created: {playlist['external_urls']['spotify']}")
+                    st.error("No track URIs found; playlist not created.")
+            except Exception as e:
+                st.error(f"Error creating Spotify playlist: {e}")
