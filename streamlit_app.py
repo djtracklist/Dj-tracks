@@ -262,71 +262,17 @@ if "dj_tracks" in st.session_state:
             st.session_state["downloaded_tracks"].append(mp3)
             st.success(f"✅ Downloaded {os.path.basename(mp3)}")
 
-    # persistent download buttons
+        # persistent download buttons
     if st.session_state.get("downloaded_tracks"):
         st.write("---")
-        for path in st.session_state["downloaded_tracks"]:
+        for idx, path in enumerate(st.session_state["downloaded_tracks"]):
             if os.path.exists(path):
                 with open(path, "rb") as f:
                     data = f.read()
                 st.download_button(
-                    f"Download {os.path.basename(path)}",
-                    data,
+                    label=f"Download {os.path.basename(path)}",
+                    data=data,
                     file_name=os.path.basename(path),
                     mime="audio/mp3",
+                    key=f"persist_dl_{idx}",
                 )
-
-# ── EXPORT TO SPOTIFY (OAuth via Redirect) ───────────────────────────────────────
-if "dj_tracks" in st.session_state:
-    st.write("---")
-    st.subheader("Export to Spotify")
-    # Setup OAuth
-    sp_oauth = SpotifyOAuth(
-        client_id=SPOTIFY_CLIENT_ID,
-        client_secret=SPOTIFY_CLIENT_SECRET,
-        redirect_uri=SPOTIFY_REDIRECT_URI,
-        scope="playlist-modify-public",
-        show_dialog=True,
-    )
-
-    # Step 1: authorization
-    if "spotify_auth_url" not in st.session_state:
-        # generate auth URL and redirect user
-        auth_url = sp_oauth.get_authorize_url()
-        st.session_state["spotify_auth_url"] = auth_url
-        st.markdown(f"[Authorize with Spotify to Continue]({auth_url})")
-    else:
-        # parse code from query parameters
-        params = st.experimental_get_query_params()
-        code = params.get("code", [None])[0]
-        if code and "spotify_token" not in st.session_state:
-            try:
-                token_info = sp_oauth.get_access_token(code)
-                st.session_state["spotify_token"] = token_info["access_token"]
-                st.success("✅ Spotify authorization successful!")
-            except Exception as e:
-                st.error(f"Spotify auth failed: {e}")
-
-        # once token is present, allow playlist creation
-        if st.session_state.get("spotify_token"):
-            if st.button("Create Spotify Playlist", key="btn_spotify_create"):
-                try:
-                    sp = spotipy.Spotify(auth=st.session_state["spotify_token"])
-                    uris = []
-                    for t in st.session_state["dj_tracks"]:
-                        q = f"{t['artist']} {t['track']}"
-                        res = sp.search(q=q, type="track", limit=1)
-                        items = res.get("tracks", {}).get("items", [])
-                        if items:
-                            uris.append(items[0]["uri"])
-                        else:
-                            st.warning(f"No Spotify match for {q}")
-                    if uris:
-                        user_id = sp.current_user()["id"]
-                        playlist = sp.user_playlist_create(user=user_id, name="My DJ Set Playlist", public=True)
-                        sp.playlist_add_items(playlist["id"], uris)
-                        st.success(f"🔗 Spotify playlist created: {playlist['external_urls']['spotify']}")
-                    else:
-                        st.error("No track URIs found; playlist not created.")
-                except Exception as e:
-                    st.error(f"Error creating Spotify playlist: {e}")
