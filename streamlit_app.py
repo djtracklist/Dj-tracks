@@ -42,10 +42,10 @@ st.set_page_config(page_title="DJ Set Tracklist & MP3 Downloader", layout="cente
 st.title("🎧 DJ Set Tracklist Extractor & MP3 Downloader")
 
 # ── CONFIGURATION ──────────────────────────────────────────────────────────────
-api_key = st.secrets.get("OPENAI_API_KEY", "")
+api_key      = st.secrets.get("OPENAI_API_KEY", "")
 COMMENT_LIMIT = 100
-SORT_FLAG = SORT_BY_POPULAR
-MODELS = ["gpt-4", "gpt-3.5-turbo"]
+SORT_FLAG     = SORT_BY_POPULAR
+MODELS        = ["gpt-4", "gpt-3.5-turbo"]
 
 # ── UTIL: Fetch YouTube search results ──────────────────────────────────────────
 @st.cache_data(show_spinner=False)
@@ -73,7 +73,11 @@ def fetch_video_candidates(entries):
     return results
 
 # ── SECTION: YouTube Set Extraction ─────────────────────────────────────────────
-video_url = st.text_input("YouTube DJ Set URL", placeholder="https://www.youtube.com/watch?v=...", key="url_input")
+video_url = st.text_input(
+    "YouTube DJ Set URL",
+    placeholder="https://www.youtube.com/watch?v=...",
+    key="url_input"
+)
 if st.button("Extract Tracks", key="extract_setlist"):
     if not api_key:
         st.error("OpenAI API key is missing!")
@@ -85,9 +89,9 @@ if st.button("Extract Tracks", key="extract_setlist"):
     # download comments
     st.info("Step 1: downloading comments…")
     try:
-        downloader = YoutubeCommentDownloader()
-        raw_comments = downloader.get_comments_from_url(video_url, sort_by=SORT_FLAG)
-        comments = [c.get("text", "") for c in raw_comments][:COMMENT_LIMIT]
+        downloader    = YoutubeCommentDownloader()
+        raw_comments  = downloader.get_comments_from_url(video_url, sort_by=SORT_FLAG)
+        comments      = [c.get("text", "") for c in raw_comments][:COMMENT_LIMIT]
         if not comments:
             raise RuntimeError("No comments found.")
         st.success(f"✅ {len(comments)} comments downloaded.")
@@ -101,10 +105,12 @@ if st.button("Extract Tracks", key="extract_setlist"):
     system_prompt = (
         "You are a world-class DJ-set tracklist curator.\n"
         "Given raw YouTube comments, extract timestamped tracks and corrections.\n"
-        "Return ONLY JSON with 'tracks' and 'corrections' lists (fields: artist, track, version, label)."
+        "Return ONLY JSON with 'tracks' and 'corrections' lists "
+        "(fields: artist, track, version, label)."
     )
     few_shot = (
-        "### Example Input:\nComments:\n03:45 Artist A - Song A\n05:10 Artist B - Song B [2010]\n\n"
+        "### Example Input:\nComments:\n03:45 Artist A - Song A\n"
+        "05:10 Artist B - Song B [2010]\n\n"
         "### Example JSON Output:\n{ 'tracks': [...], 'corrections': [...] }"
     )
     snippet = "\n".join(comments)
@@ -120,19 +126,19 @@ if st.button("Extract Tracks", key="extract_setlist"):
             resp = client.chat.completions.create(
                 model=model,
                 messages=[
-                    {"role": "system", "content": system_prompt},
+                    {"role": "system",    "content": system_prompt},
                     {"role": "assistant", "content": few_shot},
-                    {"role": "user", "content": f"Comments:\n{snippet}"}
+                    {"role": "user",      "content": f"Comments:\n{snippet}"}
                 ],
                 temperature=0
             )
             out = resp.choices[0].message.content
-            js = extract_json(out)
+            js  = extract_json(out)
             parsed = json.loads(js)
             if isinstance(parsed, dict) and "tracks" in parsed and "corrections" in parsed:
-                tracks = parsed["tracks"]
+                tracks      = parsed["tracks"]
                 corrections = parsed["corrections"]
-                used_model = model
+                used_model  = model
                 break
         except Exception:
             continue
@@ -144,11 +150,54 @@ if st.button("Extract Tracks", key="extract_setlist"):
     st.success(f"✅ {len(tracks)} tracks + {len(corrections)} corrections.")
     st.session_state["dj_tracks"] = tracks + corrections
 
+# ── SECTION: Direct YouTube Video → MP3 ─────────────────────────────────────────
+st.write("---")
+st.subheader("Download YouTube Music Video as MP3")
+video_direct_url = st.text_input(
+    "YouTube Video URL",
+    placeholder="https://www.youtube.com/watch?v=...",
+    key="video_direct_url"
+)
+if st.button("Download Video as MP3", key="download_direct"):
+    if not video_direct_url.strip():
+        st.error("Please enter a YouTube Video URL.")
+    else:
+        st.info("Downloading MP3…")
+        os.makedirs("downloads", exist_ok=True)
+        opts = {
+            "format": "bestaudio/best",
+            "outtmpl": os.path.join("downloads", "%(title)s.%(ext)s"),
+            "postprocessors": [{
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "mp3",
+                "preferredquality": "192"
+            }],
+            "ffmpeg_location": FF_BIN,
+            "ffprobe_location": FP_BIN,
+            "quiet": True,
+        }
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(video_direct_url, download=True)
+                mp3  = ydl.prepare_filename(info).rsplit('.', 1)[0] + ".mp3"
+            st.success(f"✅ Downloaded {os.path.basename(mp3)}")
+            with open(mp3, "rb") as f:
+                data = f.read()
+            st.download_button(
+                label=f"Download {os.path.basename(mp3)}",
+                data=data,
+                file_name=os.path.basename(mp3),
+                mime="audio/mp3",
+                key="direct_dl_button"
+            )
+        except Exception as e:
+            st.error(f"Failed to download: {e}")
+
 # ── SECTION: Manual Track Search ─────────────────────────────────────────────────
 st.write("---")
 st.write("### Manual Track Search")
 artist_manual = st.text_input("Artist", key="manual_artist")
-track_manual = st.text_input("Track Title", key="manual_track")
+track_manual  = st.text_input("Track Title", key="manual_track")
 if st.button("Search Tracks", key="search_manual"):
     if not artist_manual.strip() or not track_manual.strip():
         st.error("Please enter both artist and track title.")
@@ -162,7 +211,6 @@ if st.button("Search Tracks", key="search_manual"):
             st.session_state.pop("manual_video", None)
             st.error(f"No YouTube match for {artist_manual} – {track_manual}")
 
-# Display and Download Manual Result
 if "manual_video" in st.session_state:
     video = st.session_state["manual_video"]
     c1, c2, c3 = st.columns([1,4,1])
@@ -175,27 +223,36 @@ if "manual_video" in st.session_state:
         opts = {
             "format": "bestaudio/best",
             "outtmpl": os.path.join("downloads", "%(title)s.%(ext)s"),
-            "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}],
+            "postprocessors": [{
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "mp3",
+                "preferredquality": "192"
+            }],
             "ffmpeg_location": FF_BIN,
             "ffprobe_location": FP_BIN,
-            "quiet": True
+            "quiet": True,
         }
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(video['webpage_url'], download=True)
-                mp3 = ydl.prepare_filename(info).rsplit('.',1)[0] + ".mp3"
-            st.success(f"✅ {os.path.basename(mp3)}")
+                mp3  = ydl.prepare_filename(info).rsplit('.',1)[0] + ".mp3"
+            st.success(f"✅ Downloaded {os.path.basename(mp3)}")
             st.session_state["manual_mp3"] = mp3
         except Exception as e:
             st.error(f"Error downloading {artist_manual} – {track_manual}: {e}")
 
-# Show Download Button if ready
 if "manual_mp3" in st.session_state:
     path = st.session_state["manual_mp3"]
     if os.path.exists(path):
         with open(path, "rb") as f:
             data = f.read()
-        st.download_button(label=f"Download {os.path.basename(path)}", data=data, file_name=os.path.basename(path), mime="audio/mp3")
+        st.download_button(
+            label=f"Download {os.path.basename(path)}",
+            data=data,
+            file_name=os.path.basename(path),
+            mime="audio/mp3",
+            key="manual_dl_button"
+        )
 
 # ── SECTION: Extracted Tracklist Preview & Download ─────────────────────────────
 if "dj_tracks" in st.session_state:
@@ -212,15 +269,14 @@ if "dj_tracks" in st.session_state:
         if not vid:
             st.error(f"No match for {entry['artist']} – {entry['track']}")
             continue
-        col1, col2, col3 = st.columns([1, 4, 1])
-        col1.image(vid['thumbnail'], width=100)
+        col1, col2, col3 = st.columns([1,4,1])
+        col1.image(vid["thumbnail"], width=100)
         col2.markdown(f"**[{vid['title']}]({vid['webpage_url']})**")
         col2.caption(f"Search: `{entry['artist']} - {entry['track']}`")
         if col3.checkbox("", key=f"select_{i}"):
             to_download.append(vid)
 
     st.write("---")
-    # Trigger downloads and store list in session state
     if to_download and st.button("Download Selected MP3s", key="download_selected"):
         st.info("Downloading MP3s…")
         os.makedirs("downloads", exist_ok=True)
@@ -229,24 +285,28 @@ if "dj_tracks" in st.session_state:
             opts = {
                 "format": "bestaudio/best",
                 "outtmpl": os.path.join("downloads", "%(title)s.%(ext)s"),
-                "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}],
+                "postprocessors": [{
+                    "key": "FFmpegExtractAudio",
+                    "preferredcodec": "mp3",
+                    "preferredquality": "192"
+                }],
                 "ffmpeg_location": FF_BIN,
                 "ffprobe_location": FP_BIN,
-                "quiet": True
+                "quiet": True,
             }
             try:
                 with yt_dlp.YoutubeDL(opts) as ydl:
                     info = ydl.extract_info(vid['webpage_url'], download=True)
-                    mp3 = ydl.prepare_filename(info).rsplit('.', 1)[0] + ".mp3"
-                    downloaded.append(mp3)
+                    mp3  = ydl.prepare_filename(info).rsplit('.',1)[0] + ".mp3"
                 st.success(f"✅ {os.path.basename(mp3)}")
+                downloaded.append(mp3)
             except Exception as ex:
                 st.error(f"Error downloading {vid['title']}: {ex}")
         st.session_state["downloaded_tracks"] = downloaded
 
-    # Render persistent download buttons
     if "downloaded_tracks" in st.session_state:
-        for path in st.session_state["downloaded_tracks"]:
+        st.write("---")
+        for idx, path in enumerate(st.session_state["downloaded_tracks"]):
             if os.path.exists(path):
                 with open(path, "rb") as f:
                     data = f.read()
@@ -255,7 +315,7 @@ if "dj_tracks" in st.session_state:
                     data=data,
                     file_name=os.path.basename(path),
                     mime="audio/mp3",
+                    key=f"persist_dl_{idx}"
                 )
     elif not to_download:
         st.info("Select at least one track to enable download.")
-        
